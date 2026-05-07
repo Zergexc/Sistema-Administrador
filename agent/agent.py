@@ -70,6 +70,20 @@ def get_mac():
     return mac
 
 
+def get_cpu_name():
+    try:
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"HARDWARE\DESCRIPTION\System\CentralProcessor\0"
+        )
+        name, _ = winreg.QueryValueEx(key, "ProcessorNameString")
+        winreg.CloseKey(key)
+        return name.strip()
+    except Exception:
+        return platform.processor() or "N/A"
+
+
 def collect_payload(config):
     vm = psutil.virtual_memory()
     disk = psutil.disk_usage("C:\\")
@@ -80,7 +94,7 @@ def collect_payload(config):
         "os_version": f"{platform.system()} {platform.release()}",
         "ram_total_gb": round(vm.total / (1024**3), 2),
         "ram_free_gb": round(vm.available / (1024**3), 2),
-        "cpu_model": platform.processor() or "N/A",
+        "cpu_model": get_cpu_name(),
         "disk_c_free_gb": round(disk.free / (1024**3), 2),
         "uptime_seconds": int(time.time() - psutil.boot_time()),
         "internet_ok": ping_internet(),

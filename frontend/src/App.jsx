@@ -1,25 +1,54 @@
 import { Navigate, Route, Routes } from "react-router-dom";
-import Sidebar from "./components/Sidebar";
+import Layout from "./components/Layout";
+import ProtectedRoute from "./components/ProtectedRoute";
 import AlertsPage from "./pages/Alerts";
 import DashboardPage from "./pages/Dashboard";
 import DeviceDetailPage from "./pages/DeviceDetail";
 import DevicesPage from "./pages/Devices";
+import InventoryPage from "./pages/Inventory";
+import InventoryCategoriesPage from "./pages/InventoryCategories";
+import InventoryDetailPage from "./pages/InventoryDetail";
+import LoginPage from "./pages/Login";
 import SettingsPage from "./pages/Settings";
+import UsersPage from "./pages/Users";
 
 export default function App() {
   return (
-    <div className="flex min-h-screen bg-dark-900">
-      <Sidebar />
-      <main className="flex-1 p-6 md:p-8 overflow-y-auto max-h-screen">
-        <Routes>
-          <Route path="/" element={<DashboardPage />} />
-          <Route path="/devices" element={<DevicesPage />} />
-          <Route path="/devices/:id" element={<DeviceDetailPage />} />
-          <Route path="/alerts" element={<AlertsPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </main>
-    </div>
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+
+      <Route
+        element={
+          <ProtectedRoute>
+            <Layout />
+          </ProtectedRoute>
+        }
+      >
+        <Route path="/" element={<DashboardPage />} />
+        <Route path="/devices" element={<DevicesPage />} />
+        <Route path="/devices/:id" element={<DeviceDetailPage />} />
+        <Route path="/inventory" element={<InventoryPage />} />
+        <Route path="/inventory/categories" element={<InventoryCategoriesPage />} />
+        <Route path="/inventory/:id" element={<InventoryDetailPage />} />
+        <Route path="/alerts" element={<AlertsPage />} />
+        <Route
+          path="/settings"
+          element={
+            <ProtectedRoute requireAdmin>
+              <SettingsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/users"
+          element={
+            <ProtectedRoute requireAdmin>
+              <UsersPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Route>
+    </Routes>
   );
 }

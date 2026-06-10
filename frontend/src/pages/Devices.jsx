@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import DeviceTable from "../components/DeviceTable";
+import { useWsEvent } from "../hooks/useWsEvent";
 import { api } from "../services/api";
 
 export default function DevicesPage() {
@@ -9,25 +10,24 @@ export default function DevicesPage() {
   const [search, setSearch] = useState("");
   const navigate = useNavigate();
 
-  useEffect(() => {
-    let mounted = true;
-    const load = () =>
+  const load = useCallback(
+    () =>
       api
         .getDevices()
-        .then((result) => {
-          if (mounted) setDevices(result);
-        })
-        .catch((err) => {
-          if (mounted) setError(err.message || "No se pudo cargar equipos.");
-        });
+        .then(setDevices)
+        .catch((err) => setError(err.message || "No se pudo cargar equipos.")),
+    []
+  );
 
+  useEffect(() => {
     load();
-    const interval = setInterval(load, 30000);
-    return () => {
-      mounted = false;
-      clearInterval(interval);
-    };
-  }, []);
+    const interval = setInterval(load, 30000); // fallback si el WS falla
+    return () => clearInterval(interval);
+  }, [load]);
+
+  useWsEvent((msg) => {
+    if (["device_update", "device_registered"].includes(msg.type)) load();
+  });
 
   if (error) {
     return (
@@ -48,19 +48,13 @@ export default function DevicesPage() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white">Equipos</h1>
           <p className="text-dark-400 text-sm mt-1">Gestión y monitoreo de dispositivos</p>
         </div>
         <div className="relative">
-          <svg
-            className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-500"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
+          <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
           <input
@@ -74,7 +68,6 @@ export default function DevicesPage() {
         </div>
       </div>
 
-      {/* Table */}
       <DeviceTable devices={filtered} onViewDetail={(id) => navigate(`/devices/${id}`)} />
     </div>
   );

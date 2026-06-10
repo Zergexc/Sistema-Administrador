@@ -2,5 +2,6 @@
   "server_url": "http://127.0.0.1:8000",
   "report_interval_seconds": 120,
   "hostname_override": "",
-  "token": ""
+  "token": "",
+  "full_scan_every": 15
 }

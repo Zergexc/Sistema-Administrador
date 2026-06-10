@@ -1,25 +1,46 @@
 import json
-from datetime import datetime, timedelta
+from collections import Counter
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
-from ..auth import verify_api_key
+from ..auth import get_current_user, require_admin, verify_api_key
 from ..database import get_db
+from ..models import to_naive, utcnow
 from ..services.alert_service import evaluate_alerts
+from ..services.ingest_service import ingest_payload
 from ..services.task_service import get_pending_tasks
+from ..services.ws_manager import manager
 
 router = APIRouter(prefix="/api", tags=["devices"])
 
 
+def _device_payload(device: models.Device) -> dict:
+    return {
+        "id": device.id,
+        "hostname": device.hostname,
+        "ip_address": device.ip_address,
+        "current_user": device.current_user,
+        "cpu_percent": device.cpu_percent,
+        "last_seen": device.last_seen.isoformat() if device.last_seen else None,
+    }
+
+
 @router.get("/devices", response_model=list[schemas.DeviceOut])
-def list_devices(db: Session = Depends(get_db)):
+def list_devices(
+    db: Session = Depends(get_db), _: models.User = Depends(get_current_user)
+):
     return db.query(models.Device).order_by(models.Device.hostname.asc()).all()
 
 
 @router.get("/devices/{device_id}", response_model=schemas.DeviceDetail)
-def get_device(device_id: int, db: Session = Depends(get_db)):
+def get_device(
+    device_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
     device = db.query(models.Device).filter(models.Device.id == device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Equipo no encontrado")
@@ -43,18 +64,44 @@ def get_device(device_id: int, db: Session = Depends(get_db)):
         .limit(15)
         .all()
     )
+    disks = (
+        db.query(models.DiskInfo)
+        .filter(models.DiskInfo.device_id == device.id)
+        .order_by(models.DiskInfo.mount_point.asc())
+        .all()
+    )
 
     payload = json.loads(latest_diag.result_json) if latest_diag else {}
     return schemas.DeviceDetail(
         device=device,
         latest_payload=payload,
         active_alerts=[
-            {"code": a.code, "message": a.message, "severity": a.severity, "created_at": a.created_at}
+            {
+                "id": a.id,
+                "code": a.code,
+                "message": a.message,
+                "severity": a.severity,
+                "created_at": a.created_at,
+            }
             for a in alerts
         ],
         diagnostics_history=[
-            {"id": d.id, "summary": d.summary, "alerts_detected": d.alerts_detected, "created_at": d.created_at}
+            {
+                "id": d.id,
+                "summary": d.summary,
+                "alerts_detected": d.alerts_detected,
+                "created_at": d.created_at,
+            }
             for d in history
+        ],
+        disks=[
+            {
+                "mount_point": d.mount_point,
+                "total_gb": d.total_gb,
+                "free_gb": d.free_gb,
+                "percent_used": d.percent_used,
+            }
+            for d in disks
         ],
     )
 
@@ -66,20 +113,24 @@ def register_device(
     _: None = Depends(verify_api_key),
 ):
     device = db.query(models.Device).filter(models.Device.hostname == payload.hostname).first()
+    is_new = device is None
     if not device:
         device = models.Device(hostname=payload.hostname)
         db.add(device)
+        db.flush()
 
-    for field, value in payload.model_dump().items():
-        if hasattr(device, field) and field not in {"hostname"}:
-            setattr(device, field, value)
-    device.last_seen = datetime.utcnow()
+    data = payload.model_dump()
+    ingest_payload(db, device, data, snapshot=False)
     db.commit()
     db.refresh(device)
 
     settings = db.query(models.Setting).first()
     if settings:
         evaluate_alerts(db, device, settings)
+
+    if is_new:
+        manager.broadcast({"type": "device_registered", "device": _device_payload(device)})
+    manager.broadcast({"type": "device_update", "device": _device_payload(device)})
     return device
 
 
@@ -94,16 +145,14 @@ def heartbeat(
     if not device:
         raise HTTPException(status_code=404, detail="Equipo no encontrado")
 
-    for field, value in payload.model_dump().items():
-        if hasattr(device, field) and field not in {"hostname"}:
-            setattr(device, field, value)
-    device.last_seen = datetime.utcnow()
+    ingest_payload(db, device, payload.model_dump(), snapshot=False)
     db.commit()
     db.refresh(device)
 
     settings = db.query(models.Setting).first()
     active_alerts = evaluate_alerts(db, device, settings) if settings else []
     tasks = get_pending_tasks(db, device_id)
+    manager.broadcast({"type": "device_update", "device": _device_payload(device)})
     return {
         "status": "ok",
         "alerts": active_alerts,
@@ -111,31 +160,141 @@ def heartbeat(
     }
 
 
+@router.put("/devices/{device_id}/thresholds", response_model=schemas.DeviceOut)
+def update_thresholds(
+    device_id: int,
+    payload: schemas.DeviceThresholdUpdate,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_admin),
+):
+    """Configura umbrales de alerta individuales por equipo (Fase 8)."""
+    device = db.query(models.Device).filter(models.Device.id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Equipo no encontrado")
+    device.alert_disk_min_free_gb = payload.alert_disk_min_free_gb
+    device.alert_ram_min_free_gb = payload.alert_ram_min_free_gb
+    db.commit()
+    db.refresh(device)
+    settings = db.query(models.Setting).first()
+    if settings:
+        evaluate_alerts(db, device, settings)
+    return device
+
+
 @router.get("/dashboard")
-def dashboard_metrics(db: Session = Depends(get_db)):
+def dashboard_metrics(
+    db: Session = Depends(get_db), _: models.User = Depends(get_current_user)
+):
     settings = db.query(models.Setting).first()
     offline_minutes = settings.offline_after_minutes if settings else 5
-    threshold = datetime.utcnow() - timedelta(minutes=offline_minutes)
+    threshold = to_naive(utcnow()) - timedelta(minutes=offline_minutes)
 
-    total = db.query(models.Device).count()
-    online = db.query(models.Device).filter(models.Device.last_seen >= threshold).count()
+    devices = db.query(models.Device).all()
+    total = len(devices)
+    online_ids = {
+        d.id for d in devices if d.last_seen and to_naive(d.last_seen) >= threshold
+    }
+    online = len(online_ids)
     offline = total - online
-    alerts = db.query(models.Alert).filter(models.Alert.is_active.is_(True)).count()
-    recent = (
+
+    active_alerts = (
+        db.query(models.Alert).filter(models.Alert.is_active.is_(True)).all()
+    )
+    devices_with_alerts = len({a.device_id for a in active_alerts})
+    crit_devices = {a.device_id for a in active_alerts if a.severity == "critical"}
+    warn_devices = {a.device_id for a in active_alerts if a.severity != "critical"}
+
+    # Mapa de calor: estado por equipo.
+    grid = []
+    for d in devices:
+        if d.id not in online_ids:
+            state = "offline"
+        elif d.id in crit_devices:
+            state = "critical"
+        elif d.id in warn_devices:
+            state = "warning"
+        else:
+            state = "ok"
+        grid.append(
+            {
+                "id": d.id,
+                "hostname": d.hostname,
+                "state": state,
+                "cpu_percent": d.cpu_percent,
+            }
+        )
+
+    # Distribución de SO.
+    os_dist = Counter((d.os_version or "Desconocido") for d in devices)
+
+    # Top consumo RAM / CPU (solo equipos online).
+    def ram_used_pct(d: models.Device) -> float:
+        if d.ram_total_gb and d.ram_free_gb is not None and d.ram_total_gb > 0:
+            return round((d.ram_total_gb - d.ram_free_gb) / d.ram_total_gb * 100, 1)
+        return 0.0
+
+    online_devices = [d for d in devices if d.id in online_ids]
+    top_ram = sorted(online_devices, key=ram_used_pct, reverse=True)[:5]
+    top_cpu = sorted(
+        online_devices, key=lambda d: d.cpu_percent or 0, reverse=True
+    )[:5]
+
+    # Resumen de disco de toda la oficina.
+    disk_total = sum(d.disk_total_gb or 0 for d in devices)
+    disk_free = sum(
+        (d.disk_total_gb or 0) * (1 - (d.disk_used_percent or 0) / 100) for d in devices
+    )
+
+    recent_diag = (
         db.query(models.Diagnostic)
         .order_by(models.Diagnostic.created_at.desc())
         .limit(8)
         .all()
     )
+    recent_alerts = (
+        db.query(models.Alert)
+        .filter(models.Alert.is_active.is_(True))
+        .order_by(models.Alert.created_at.desc())
+        .limit(8)
+        .all()
+    )
+    no_internet = sum(1 for d in online_devices if not d.internet_ok)
 
     return {
         "total_devices": total,
         "online_devices": online,
         "offline_devices": offline,
-        "devices_with_alerts": alerts,
-        "network_health": "Estable" if offline == 0 and alerts == 0 else "Atencion requerida",
+        "devices_with_alerts": devices_with_alerts,
+        "network_health": "OK" if offline == 0 and devices_with_alerts == 0 else "Atencion requerida",
+        "devices_without_internet": no_internet,
+        "grid": grid,
+        "os_distribution": [{"name": k, "value": v} for k, v in os_dist.most_common()],
+        "top_ram": [
+            {"id": d.id, "hostname": d.hostname, "value": ram_used_pct(d)}
+            for d in top_ram
+        ],
+        "top_cpu": [
+            {"id": d.id, "hostname": d.hostname, "value": d.cpu_percent or 0}
+            for d in top_cpu
+        ],
+        "disk_summary": {
+            "total_gb": round(disk_total, 1),
+            "free_gb": round(disk_free, 1),
+            "used_gb": round(disk_total - disk_free, 1),
+        },
         "latest_diagnostics": [
             {"id": d.id, "device_id": d.device_id, "summary": d.summary, "created_at": d.created_at}
-            for d in recent
+            for d in recent_diag
+        ],
+        "recent_alerts": [
+            {
+                "id": a.id,
+                "device_id": a.device_id,
+                "code": a.code,
+                "message": a.message,
+                "severity": a.severity,
+                "created_at": a.created_at,
+            }
+            for a in recent_alerts
         ],
     }

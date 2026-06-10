@@ -15,7 +15,13 @@ env/
 *.sqlite3
 *.db
 agent/config.json
+agent/.venv-build/
+agent/build/
+agent/*.spec
 
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Herramientas locales
+.claude/

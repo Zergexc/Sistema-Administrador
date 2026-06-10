@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models
-from ..auth import verify_api_key
+from ..auth import require_admin
 from ..database import get_db
 from ..services.wol_service import send_magic_packet
 
@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api", tags=["wol"])
 def trigger_wol(
     device_id: int,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_api_key),
+    _: models.User = Depends(require_admin),
 ):
     device = db.query(models.Device).filter(models.Device.id == device_id).first()
     if not device:

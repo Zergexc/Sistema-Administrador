@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
-from ..auth import verify_api_key
+from ..auth import get_current_user, require_admin
 from ..database import get_db
 from ..services.alert_service import flag_offline_devices
 
@@ -20,7 +20,9 @@ def get_or_create_settings(db: Session) -> models.Setting:
 
 
 @router.get("/settings", response_model=schemas.SettingsOut)
-def read_settings(db: Session = Depends(get_db)):
+def read_settings(
+    db: Session = Depends(get_db), _: models.User = Depends(get_current_user)
+):
     settings = get_or_create_settings(db)
     flag_offline_devices(db, settings)
     return settings
@@ -30,13 +32,27 @@ def read_settings(db: Session = Depends(get_db)):
 def update_settings(
     payload: schemas.SettingsUpdate,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_api_key),
+    _: models.User = Depends(require_admin),
 ):
     settings = get_or_create_settings(db)
     settings.report_interval_seconds = payload.report_interval_seconds
     settings.disk_min_free_gb = payload.disk_min_free_gb
     settings.offline_after_minutes = payload.offline_after_minutes
     settings.ui_theme = payload.ui_theme
+
+    # Notificaciones (Fase 8)
+    settings.notifications_enabled = payload.notifications_enabled
+    settings.smtp_host = payload.smtp_host
+    settings.smtp_port = payload.smtp_port
+    settings.smtp_user = payload.smtp_user
+    settings.smtp_use_tls = payload.smtp_use_tls
+    settings.smtp_from = payload.smtp_from
+    settings.alert_email_to = payload.alert_email_to
+    settings.webhook_url = payload.webhook_url
+    # Solo actualiza la contraseña SMTP si se envía un valor no vacío.
+    if payload.smtp_password:
+        settings.smtp_password = payload.smtp_password
+
     db.commit()
     db.refresh(settings)
     return settings

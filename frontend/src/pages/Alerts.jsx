@@ -1,121 +1,112 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../contexts/AuthContext";
+import { useToast } from "../contexts/ToastContext";
+import { useWsEvent } from "../hooks/useWsEvent";
 import { api } from "../services/api";
+import { formatDateTime, timeAgo } from "../utils/formatters";
 
-function timeAgo(dateStr) {
-  if (!dateStr) return "—";
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "Ahora";
-  if (mins < 60) return `hace ${mins} min`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `hace ${hrs}h`;
-  return `hace ${Math.floor(hrs / 24)}d`;
-}
+const SEV_STYLE = {
+  critical: "bg-red-500/15 border-red-500/30 text-red-400",
+  warning: "bg-amber-500/15 border-amber-500/30 text-amber-400",
+  info: "bg-blue-500/15 border-blue-500/30 text-blue-400",
+};
 
 export default function AlertsPage() {
-  const [items, setItems] = useState([]);
+  const [alerts, setAlerts] = useState([]);
+  const [filter, setFilter] = useState("active"); // active | all
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(0);
   const navigate = useNavigate();
+  const { isAdmin } = useAuth();
+  const { addToast } = useToast();
 
-  useEffect(() => {
-    let mounted = true;
+  const load = useCallback(() => {
+    const params = filter === "active" ? "?active=true" : "";
     api
-      .getDiagnostics()
-      .then((result) => {
-        if (mounted) setItems(Array.isArray(result) ? result : result?.value || []);
-      })
-      .catch((err) => {
-        if (mounted) setError(err.message || "No se pudo cargar alertas.");
-      });
-    return () => {
-      mounted = false;
-    };
-  }, []);
+      .getAlerts(params)
+      .then(setAlerts)
+      .catch((err) => setError(err.message || "No se pudo cargar alertas."));
+  }, [filter]);
+
+  useEffect(() => { load(); }, [load]);
+  useWsEvent((msg) => {
+    if (["alert_created", "alert_resolved"].includes(msg.type)) load();
+  });
+
+  const resolve = async (id) => {
+    setBusy(id);
+    try {
+      await api.resolveAlert(id, "Resuelto desde el panel");
+      addToast("Alerta resuelta", "success");
+      load();
+    } catch (err) {
+      addToast(err.message || "No se pudo resolver", "error");
+    } finally {
+      setBusy(0);
+    }
+  };
 
   if (error) {
-    return (
-      <div className="glass-card p-8 text-center animate-fade-in">
-        <p className="text-red-400 font-medium">{error}</p>
-      </div>
-    );
+    return <div className="glass-card p-8 text-center animate-fade-in"><p className="text-red-400 font-medium">{error}</p></div>;
   }
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Page Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-white">Alertas y Diagnósticos</h1>
-        <p className="text-dark-400 text-sm mt-1">Historial de reportes y alertas del sistema</p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Alertas</h1>
+          <p className="text-dark-400 text-sm mt-1">Historial y gestión de alertas del sistema</p>
+        </div>
+        <div className="flex gap-1 bg-dark-700/40 p-1 rounded-lg self-start">
+          {[["active", "Activas"], ["all", "Todas"]].map(([k, label]) => (
+            <button key={k} onClick={() => setFilter(k)}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium ${filter === k ? "bg-accent-600/30 text-accent-300" : "text-dark-400 hover:text-white"}`}>
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Content */}
       <div className="glass-card overflow-hidden">
-        {items.length > 0 ? (
+        {alerts.length ? (
           <div className="divide-y divide-dark-700/30">
-            {items.map((item) => {
-              const hasAlerts = item.alerts_detected && item.alerts_detected !== "OK" && item.alerts_detected.length > 0;
-              return (
-                <div
-                  key={item.id}
-                  className="flex items-center gap-4 p-5 hover:bg-dark-700/30 transition-colors cursor-pointer group"
-                  onClick={() => navigate(`/devices/${item.device_id}`)}
-                >
-                  {/* Icon */}
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                    hasAlerts
-                      ? "bg-amber-500/15 border border-amber-500/20"
-                      : "bg-emerald-500/15 border border-emerald-500/20"
-                  }`}>
-                    {hasAlerts ? (
-                      <svg className="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                      </svg>
-                    ) : (
-                      <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
+            {alerts.map((a) => (
+              <div key={a.id} className="flex items-center gap-4 p-5 hover:bg-dark-700/20 transition-colors">
+                <span className={`px-2.5 py-1 rounded-lg text-xs font-bold border flex-shrink-0 ${SEV_STYLE[a.severity] || SEV_STYLE.warning}`}>
+                  {a.code}
+                </span>
+                <div className="flex-1 min-w-0 cursor-pointer" onClick={() => navigate(`/devices/${a.device_id}`)}>
+                  <p className="text-sm font-medium text-dark-100 truncate">{a.message}</p>
+                  <div className="flex items-center gap-3 mt-1 flex-wrap">
+                    <span className="text-[11px] text-dark-500">Equipo #{a.device_id}</span>
+                    <span className="text-[11px] text-dark-500">Creada {timeAgo(a.created_at)}</span>
+                    {!a.is_active && a.resolved_at && (
+                      <span className="text-[11px] text-emerald-400">
+                        ✓ Resuelta {formatDateTime(a.resolved_at)} por {a.resolved_by || "—"}
+                      </span>
                     )}
                   </div>
-
-                  {/* Content */}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-dark-200 group-hover:text-white transition-colors truncate">
-                      {item.summary || "Diagnóstico"}
-                    </p>
-                    <div className="flex items-center gap-3 mt-1">
-                      <span className="text-[11px] text-dark-500">Dispositivo #{item.device_id}</span>
-                      {hasAlerts ? (
-                        <span className="text-[11px] text-amber-400 font-medium">⚠ Alertas detectadas</span>
-                      ) : (
-                        <span className="text-[11px] text-emerald-400 font-medium">✓ Sin alertas</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Timestamp */}
-                  <div className="text-right flex-shrink-0">
-                    <p className="text-xs text-dark-500">{timeAgo(item.created_at)}</p>
-                    <p className="text-[10px] text-dark-600 mt-0.5">
-                      {item.created_at ? new Date(item.created_at).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" }) : ""}
-                    </p>
-                  </div>
-
-                  {/* Arrow */}
-                  <svg className="w-4 h-4 text-dark-600 group-hover:text-accent-400 transition-colors flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
                 </div>
-              );
-            })}
+                {a.is_active ? (
+                  isAdmin && (
+                    <button onClick={() => resolve(a.id)} disabled={busy === a.id}
+                      className="btn-success !py-1.5 !px-3 text-xs flex-shrink-0">
+                      {busy === a.id ? "..." : "Resolver"}
+                    </button>
+                  )
+                ) : (
+                  <span className="badge-online flex-shrink-0">Resuelta</span>
+                )}
+              </div>
+            ))}
           </div>
         ) : (
           <div className="text-center py-16">
             <svg className="w-16 h-16 mx-auto text-dark-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <p className="text-dark-400 font-medium">No hay registros aún</p>
-            <p className="text-dark-500 text-sm mt-1">Los diagnósticos aparecerán cuando el agente envíe reportes</p>
+            <p className="text-dark-400 font-medium">{filter === "active" ? "Sin alertas activas 🎉" : "No hay alertas registradas"}</p>
           </div>
         )}
       </div>

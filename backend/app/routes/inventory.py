@@ -1,7 +1,9 @@
+import io
 import json
 
+import qrcode
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -116,15 +118,27 @@ def export_items(
     _: models.User = Depends(get_current_user),
 ):
     query = db.query(models.InventoryItem)
+    category_name = None
+    filename = "inventario.xlsx"
+    
     if category is not None:
         query = query.filter(models.InventoryItem.category_id == category)
+        cat_obj = db.query(models.InventoryCategory).filter(models.InventoryCategory.id == category).first()
+        if cat_obj:
+            category_name = cat_obj.name
+            import re
+            # Normalizar nombre del archivo a minúsculas y caracteres válidos
+            safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', category_name.lower())
+            filename = f"inventario_{safe_name}.xlsx"
+
     items = query.order_by(models.InventoryItem.name).all()
-    content = inv.build_workbook(items)
+    content = inv.build_workbook(items, category_name=category_name)
     return StreamingResponse(
         iter([content]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=inventario.xlsx"},
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
 
 
 @router.post("/import")
@@ -253,3 +267,29 @@ def item_history(
         .order_by(models.InventoryHistory.created_at.desc())
         .all()
     )
+
+
+@router.get("/items/{item_id}/qr")
+def item_qr(
+    item_id: int,
+    base: str = Query(default="", max_length=200),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """PNG con el QR de la ficha del item (para etiquetas imprimibles).
+
+    `base` es el origin del frontend (ej. http://192.168.10.101:5173); el QR
+    codifica `{base}/inventory/{id}` para abrir la ficha al escanearlo.
+    """
+    item = db.query(models.InventoryItem).filter(models.InventoryItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item no encontrado")
+
+    url = f"{base.rstrip('/')}/inventory/{item_id}" if base else f"/inventory/{item_id}"
+    qr = qrcode.QRCode(border=1, box_size=8)
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return Response(content=buf.getvalue(), media_type="image/png")

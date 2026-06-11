@@ -48,6 +48,85 @@ def apply_scalar_fields(device: models.Device, payload: dict) -> None:
     device.last_seen = utcnow()
 
 
+def _add_change(
+    db: Session,
+    device: models.Device,
+    change_type: str,
+    details: str,
+    old_value: str | None = None,
+    new_value: str | None = None,
+) -> None:
+    db.add(
+        models.ChangeEvent(
+            device_id=device.id,
+            change_type=change_type,
+            old_value=old_value[:255] if old_value else None,
+            new_value=new_value[:255] if new_value else None,
+            details=details[:512],
+        )
+    )
+
+
+def detect_hardware_changes(db: Session, device: models.Device, payload: dict) -> None:
+    """Compara hardware reportado vs. el guardado y registra cambios.
+
+    Debe llamarse ANTES de apply_scalar_fields (necesita los valores previos).
+    Una baja de RAM genera además una alerta crítica (posible retiro de módulos).
+    """
+    # RAM total (tolerancia 0.5 GB por redondeos del agente).
+    new_ram = payload.get("ram_total_gb")
+    old_ram = device.ram_total_gb
+    if new_ram is not None and old_ram is not None and abs(new_ram - old_ram) > 0.5:
+        _add_change(
+            db,
+            device,
+            "ram_changed",
+            f"RAM total cambió de {old_ram:.1f} GB a {new_ram:.1f} GB",
+            old_value=f"{old_ram:.1f} GB",
+            new_value=f"{new_ram:.1f} GB",
+        )
+        if new_ram < old_ram:
+            db.add(
+                models.Alert(
+                    device_id=device.id,
+                    code="HARDWARE_CHANGE",
+                    message=(
+                        f"RAM reducida en {device.hostname}: "
+                        f"{old_ram:.1f} GB → {new_ram:.1f} GB"
+                    ),
+                    severity="critical",
+                )
+            )
+
+    # Modelo de CPU.
+    new_cpu = payload.get("cpu_model")
+    old_cpu = device.cpu_model
+    if new_cpu and old_cpu and new_cpu.strip() != old_cpu.strip():
+        _add_change(
+            db,
+            device,
+            "cpu_changed",
+            f"CPU cambió de '{old_cpu}' a '{new_cpu}'",
+            old_value=old_cpu,
+            new_value=new_cpu,
+        )
+
+    # Almacenamiento total (tolerancia 8 GB; un USB conectado/desconectado cuenta).
+    new_disk = payload.get("disk_total_gb")
+    old_disk = device.disk_total_gb
+    if new_disk is not None and old_disk is not None and abs(new_disk - old_disk) > 8:
+        verb = "aumentó" if new_disk > old_disk else "se redujo"
+        _add_change(
+            db,
+            device,
+            "storage_changed",
+            f"Almacenamiento total {verb}: {old_disk:.0f} GB → {new_disk:.0f} GB "
+            "(disco agregado/retirado o unidad USB)",
+            old_value=f"{old_disk:.0f} GB",
+            new_value=f"{new_disk:.0f} GB",
+        )
+
+
 def store_disks(db: Session, device: models.Device, payload: dict) -> None:
     disks = payload.get("disks") or []
     if not disks:
@@ -89,10 +168,20 @@ def store_programs(db: Session, device: models.Device, payload: dict) -> None:
     programs = payload.get("installed_programs") or []
     if not programs:
         return
+
+    # Estado previo para detectar altas/bajas/actualizaciones de software.
+    previous = {
+        p.name: (p.version or "")
+        for p in db.query(models.InstalledProgram)
+        .filter(models.InstalledProgram.device_id == device.id)
+        .all()
+    }
+
     db.query(models.InstalledProgram).filter(
         models.InstalledProgram.device_id == device.id
     ).delete()
     seen: set[str] = set()
+    current: dict[str, str] = {}
     for p in programs:
         name = (p.get("name") or "").strip()
         if not name:
@@ -101,6 +190,7 @@ def store_programs(db: Session, device: models.Device, payload: dict) -> None:
         if key in seen:
             continue
         seen.add(key)
+        current[name[:255]] = str(p.get("version") or "")
         db.add(
             models.InstalledProgram(
                 device_id=device.id,
@@ -110,6 +200,38 @@ def store_programs(db: Session, device: models.Device, payload: dict) -> None:
                 last_seen=utcnow(),
             )
         )
+
+    # Solo comparar si había un inventario previo (evita 200 eventos en el
+    # primer reporte de un equipo nuevo).
+    if not previous:
+        return
+    for name, version in current.items():
+        if name not in previous:
+            _add_change(
+                db,
+                device,
+                "program_installed",
+                f"Programa instalado: {name}" + (f" {version}" if version else ""),
+                new_value=name,
+            )
+        elif previous[name] != version and version:
+            _add_change(
+                db,
+                device,
+                "program_updated",
+                f"Programa actualizado: {name} {previous[name] or '?'} → {version}",
+                old_value=f"{name} {previous[name]}".strip(),
+                new_value=f"{name} {version}",
+            )
+    for name in previous:
+        if name not in current:
+            _add_change(
+                db,
+                device,
+                "program_removed",
+                f"Programa desinstalado: {name}",
+                old_value=name,
+            )
 
 
 def store_power_events(db: Session, device: models.Device, payload: dict) -> None:
@@ -161,6 +283,8 @@ def ingest_payload(
     db: Session, device: models.Device, payload: dict, snapshot: bool = True
 ) -> None:
     """Procesa por completo el payload del agente sobre un equipo ya persistido."""
+    # Detectar cambios de hardware ANTES de sobrescribir los valores previos.
+    detect_hardware_changes(db, device, payload)
     apply_scalar_fields(device, payload)
     store_disks(db, device, payload)
     store_programs(db, device, payload)

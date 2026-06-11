@@ -98,6 +98,22 @@ export const api = {
   requestDiagnostic: (id) => request(`/devices/${id}/request-diagnostic`, { method: "POST" }),
   sendWol: (id) => request(`/devices/${id}/wol`, { method: "POST" }),
 
+  // --- Acciones remotas ---
+  sendAction: (id, action, { message, delaySeconds } = {}) =>
+    request(`/devices/${id}/actions`, {
+      method: "POST",
+      body: JSON.stringify({
+        action,
+        message: message || null,
+        delay_seconds: delaySeconds ?? 30,
+      }),
+    }),
+  getDeviceActions: (id) => request(`/devices/${id}/actions`),
+
+  // --- Cambios detectados ---
+  getDeviceChanges: (id) => request(`/devices/${id}/changes`),
+  getRecentChanges: () => request("/changes"),
+
   // --- Métricas extendidas ---
   getSnapshots: (id, range = "24h") => request(`/devices/${id}/snapshots?range=${range}`),
   getPrograms: (id) => request(`/devices/${id}/programs`),
@@ -113,6 +129,10 @@ export const api = {
   getSettings: () => request("/settings"),
   updateSettings: (payload) =>
     request("/settings", { method: "PUT", body: JSON.stringify(payload) }),
+  testGlpiConnection: (payload) =>
+    request("/glpi/test", { method: "POST", body: JSON.stringify(payload) }),
+  syncGlpi: () =>
+    request("/glpi/sync", { method: "POST" }),
 
   // --- Inventario ---
   getCategories: () => request("/inventory/categories"),
@@ -129,11 +149,32 @@ export const api = {
     request(`/inventory/items/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
   deleteItem: (id) => request(`/inventory/items/${id}`, { method: "DELETE" }),
   getItemHistory: (id) => request(`/inventory/items/${id}/history`),
+  // Devuelve un objectURL con el PNG del QR del item (el <img> no puede
+  // mandar el header Authorization, así que se baja como blob).
+  getItemQrUrl: async (id) => {
+    const token = getToken();
+    const base = encodeURIComponent(window.location.origin);
+    const response = await fetch(`${API_BASE}/inventory/items/${id}/qr?base=${base}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!response.ok) throw new Error("No se pudo generar el QR.");
+    return URL.createObjectURL(await response.blob());
+  },
   exportInventory: (categoryId) =>
     downloadFile(
       `/inventory/export${categoryId ? `?category=${categoryId}` : ""}`,
       "inventario.xlsx"
     ),
+  // QR para un dispositivo registrado por el agente.
+  getDeviceQrUrl: async (id) => {
+    const token = getToken();
+    const base = encodeURIComponent(window.location.origin);
+    const response = await fetch(`${API_BASE}/devices/${id}/qr?base=${base}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!response.ok) throw new Error("No se pudo generar el QR.");
+    return URL.createObjectURL(await response.blob());
+  },
   importInventory: async (categoryId, file) => {
     const token = getToken();
     const form = new FormData();

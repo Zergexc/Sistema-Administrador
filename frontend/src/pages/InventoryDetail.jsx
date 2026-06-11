@@ -38,6 +38,7 @@ export default function InventoryDetailPage() {
   const [categories, setCategories] = useState([]);
   const [editOpen, setEditOpen] = useState(false);
   const [error, setError] = useState("");
+  const [qrUrl, setQrUrl] = useState("");
 
   const load = useCallback(() => {
     api.getItem(id).then(setItem).catch((e) => setError(e.message));
@@ -45,6 +46,13 @@ export default function InventoryDetailPage() {
   }, [id]);
 
   useEffect(() => { load(); api.getCategories().then(setCategories).catch(() => {}); }, [load]);
+
+  // QR de la ficha (se libera el objectURL al desmontar).
+  useEffect(() => {
+    let url = "";
+    api.getItemQrUrl(id).then((u) => { url = u; setQrUrl(u); }).catch(() => {});
+    return () => { if (url) URL.revokeObjectURL(url); };
+  }, [id]);
 
   const handleDelete = async () => {
     if (!window.confirm("¿Eliminar este item del inventario?")) return;
@@ -72,15 +80,34 @@ export default function InventoryDetailPage() {
           <h1 className="text-2xl font-bold text-white">{item.name}</h1>
           <p className="text-dark-400 text-sm mt-1">{item.category_name}</p>
         </div>
-        {isAdmin && (
-          <div className="flex gap-2">
-            <button onClick={() => setEditOpen(true)} className="btn-primary">Editar</button>
-            <button onClick={handleDelete} className="btn-danger">Eliminar</button>
-          </div>
-        )}
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={() => navigate(`/inventory/labels?ids=${id}`)} className="btn-success">
+            Imprimir etiqueta QR
+          </button>
+          {isAdmin && (
+            <>
+              <button onClick={() => setEditOpen(true)} className="btn-primary">Editar</button>
+              <button onClick={handleDelete} className="btn-danger">Eliminar</button>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-5 lg:grid-cols-2">
+        <div className="space-y-5">
+          {qrUrl && (
+            <div className="glass-card p-6 flex items-center gap-5">
+              <div className="bg-white p-2 rounded-xl flex-shrink-0">
+                <img src={qrUrl} alt="QR del item" className="w-28 h-28" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-white">Etiqueta QR</h3>
+                <p className="text-xs text-dark-400 mt-1">
+                  Escanéalo con el celular para abrir esta ficha. Útil para etiquetar el equipo físico.
+                </p>
+              </div>
+            </div>
+          )}
         <div className="glass-card p-6">
           <h3 className="text-lg font-semibold text-white mb-4">Detalles</h3>
           <Field label="Estado" value={STATUS_LABEL[item.status] || item.status} />
@@ -93,6 +120,7 @@ export default function InventoryDetailPage() {
           <Field label="Fecha de compra" value={item.purchase_date} />
           <Field label="Garantía hasta" value={item.warranty_until} />
           {item.notes && <Field label="Notas" value={item.notes} />}
+        </div>
         </div>
 
         <div className="glass-card p-6">

@@ -1,8 +1,11 @@
+import io
 import json
 from collections import Counter
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+import qrcode
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -11,7 +14,7 @@ from ..database import get_db
 from ..models import to_naive, utcnow
 from ..services.alert_service import evaluate_alerts
 from ..services.ingest_service import ingest_payload
-from ..services.task_service import get_pending_tasks
+from ..services.task_service import REMOTE_ACTIONS, create_action_task, get_pending_tasks
 from ..services.ws_manager import manager
 
 router = APIRouter(prefix="/api", tags=["devices"])
@@ -160,6 +163,92 @@ def heartbeat(
     }
 
 
+@router.post("/devices/{device_id}/actions", response_model=schemas.TaskOut)
+def queue_remote_action(
+    device_id: int,
+    payload: schemas.ActionRequest,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_admin),
+):
+    """Encola una acción remota para el agente (reiniciar, apagar, etc.)."""
+    device = db.query(models.Device).filter(models.Device.id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Equipo no encontrado")
+    if payload.action not in REMOTE_ACTIONS:
+        raise HTTPException(status_code=400, detail=f"Acción no soportada: {payload.action}")
+    if payload.action == "message" and not (payload.message or "").strip():
+        raise HTTPException(status_code=400, detail="El mensaje no puede estar vacío")
+    delay = max(0, min(payload.delay_seconds, 3600))
+    task = create_action_task(
+        db,
+        device_id,
+        payload.action,
+        message=payload.message,
+        delay_seconds=delay,
+        requested_by=user.username,
+    )
+    return task
+
+
+@router.get("/devices/{device_id}/actions", response_model=list[schemas.TaskOut])
+def list_device_actions(
+    device_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """Últimas tareas/acciones del equipo (para ver si se ejecutaron)."""
+    return (
+        db.query(models.Task)
+        .filter(models.Task.device_id == device_id)
+        .order_by(models.Task.created_at.desc())
+        .limit(20)
+        .all()
+    )
+
+
+@router.get("/devices/{device_id}/tasks")
+def poll_device_tasks(
+    device_id: int,
+    db: Session = Depends(get_db),
+    _: None = Depends(verify_api_key),
+):
+    """Polling ligero del agente: tareas pendientes sin reenviar métricas."""
+    tasks = get_pending_tasks(db, device_id)
+    return {
+        "pending_tasks": [schemas.TaskOut.model_validate(t).model_dump(mode="json") for t in tasks]
+    }
+
+
+@router.get("/devices/{device_id}/changes", response_model=list[schemas.ChangeEventOut])
+def list_device_changes(
+    device_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """Cambios de hardware/software detectados en un equipo."""
+    return (
+        db.query(models.ChangeEvent)
+        .filter(models.ChangeEvent.device_id == device_id)
+        .order_by(models.ChangeEvent.created_at.desc())
+        .limit(200)
+        .all()
+    )
+
+
+@router.get("/changes", response_model=list[schemas.ChangeEventOut])
+def list_recent_changes(
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """Cambios recientes en toda la oficina (widget del dashboard)."""
+    return (
+        db.query(models.ChangeEvent)
+        .order_by(models.ChangeEvent.created_at.desc())
+        .limit(50)
+        .all()
+    )
+
+
 @router.put("/devices/{device_id}/thresholds", response_model=schemas.DeviceOut)
 def update_thresholds(
     device_id: int,
@@ -298,3 +387,25 @@ def dashboard_metrics(
             for a in recent_alerts
         ],
     }
+
+
+@router.get("/devices/{device_id}/qr")
+def device_qr(
+    device_id: int,
+    base: str = Query(default="", max_length=200),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    """PNG con el QR de la ficha del equipo (para etiquetas imprimibles)."""
+    device = db.query(models.Device).filter(models.Device.id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Equipo no encontrado")
+
+    url = f"{base.rstrip('/')}/devices/{device_id}" if base else f"/devices/{device_id}"
+    qr = qrcode.QRCode(border=1, box_size=8)
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return Response(content=buf.getvalue(), media_type="image/png")

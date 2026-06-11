@@ -53,6 +53,15 @@ def update_settings(
     if payload.smtp_password:
         settings.smtp_password = payload.smtp_password
 
+    # Integración GLPI
+    settings.glpi_enabled = payload.glpi_enabled
+    settings.glpi_url = payload.glpi_url
+    settings.glpi_app_token = payload.glpi_app_token
+    settings.glpi_user_token = payload.glpi_user_token
+    settings.glpi_username = payload.glpi_username
+    if payload.glpi_password:
+        settings.glpi_password = payload.glpi_password
+
     db.commit()
     db.refresh(settings)
     return settings

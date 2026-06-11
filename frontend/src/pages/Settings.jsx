@@ -22,17 +22,24 @@ const defaultForm = {
   smtp_from: "",
   alert_email_to: "",
   webhook_url: "",
+  glpi_enabled: false,
+  glpi_url: "",
+  glpi_app_token: "",
+  glpi_user_token: "",
+  glpi_username: "",
+  glpi_password: "",
 };
 
 export default function SettingsPage() {
   const [form, setForm] = useState(defaultForm);
   const [loading, setLoading] = useState(false);
+  const [testingGlpi, setTestingGlpi] = useState(false);
   const { addToast } = useToast();
 
   useEffect(() => {
     api
       .getSettings()
-      .then((s) => setForm({ ...defaultForm, ...s, smtp_password: "" }))
+      .then((s) => setForm({ ...defaultForm, ...s, smtp_password: "", glpi_password: "" }))
       .catch((err) => addToast(err.message || "No se pudo cargar configuración", "error"));
   }, [addToast]);
 
@@ -51,10 +58,37 @@ export default function SettingsPage() {
       });
       addToast("Configuración guardada exitosamente", "success");
       set("smtp_password", "");
+      set("glpi_password", "");
     } catch (err) {
       addToast(err.message || "No se pudo guardar configuración", "error");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const testGlpi = async () => {
+    if (!form.glpi_url) {
+      addToast("Por favor ingresa la URL de GLPI", "warning");
+      return;
+    }
+    setTestingGlpi(true);
+    try {
+      const res = await api.testGlpiConnection({
+        glpi_url: form.glpi_url,
+        glpi_app_token: form.glpi_app_token || null,
+        glpi_user_token: form.glpi_user_token || null,
+        glpi_username: form.glpi_username || null,
+        glpi_password: form.glpi_password || null,
+      });
+      if (res.status === "success") {
+        addToast(res.message, "success");
+      } else {
+        addToast(res.message, "error");
+      }
+    } catch (err) {
+      addToast(err.message || "Error al conectar con GLPI", "error");
+    } finally {
+      setTestingGlpi(false);
     }
   };
 
@@ -133,6 +167,55 @@ export default function SettingsPage() {
               <div>
                 <label className="text-sm text-dark-300 mb-1.5 block">URL de Webhook (Teams/Slack)</label>
                 <input type="text" className="input-field" placeholder="https://hooks.slack.com/..." value={form.webhook_url || ""} onChange={(e) => set("webhook_url", e.target.value)} />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Integración GLPI */}
+        <div className="glass-card p-6 space-y-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-white">Integración con GLPI</h3>
+              <p className="text-xs text-dark-500 mt-0.5">Sincroniza equipos de cómputo registrados en tu servidor GLPI</p>
+            </div>
+            <button type="button" onClick={() => set("glpi_enabled", !form.glpi_enabled)}
+              className={`relative w-12 h-6 rounded-full transition-colors ${form.glpi_enabled ? "bg-accent-600" : "bg-dark-600"}`}>
+              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${form.glpi_enabled ? "translate-x-6" : ""}`} />
+            </button>
+          </div>
+
+          {form.glpi_enabled && (
+            <div className="space-y-4 pt-2 border-t border-dark-700/40 animate-fade-in">
+              <div>
+                <label className="text-sm text-dark-300 mb-1.5 block">URL de GLPI</label>
+                <input type="text" className="input-field" placeholder="http://192.168.1.100/glpi" value={form.glpi_url || ""} onChange={(e) => set("glpi_url", e.target.value)} />
+              </div>
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm text-dark-300 mb-1.5 block">App Token (GLPI)</label>
+                  <input type="text" className="input-field" placeholder="Token de la API de GLPI" value={form.glpi_app_token || ""} onChange={(e) => set("glpi_app_token", e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-sm text-dark-300 mb-1.5 block">User Token (GLPI)</label>
+                  <input type="password" placeholder="(Token de usuario API)" className="input-field" value={form.glpi_user_token || ""} onChange={(e) => set("glpi_user_token", e.target.value)} />
+                </div>
+              </div>
+              <p className="text-xs text-dark-500 italic">O usa autenticación alternativa con usuario y contraseña:</p>
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm text-dark-300 mb-1.5 block">Usuario GLPI</label>
+                  <input type="text" className="input-field" placeholder="glpi" value={form.glpi_username || ""} onChange={(e) => set("glpi_username", e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-sm text-dark-300 mb-1.5 block">Contraseña GLPI</label>
+                  <input type="password" placeholder="(sin cambios)" className="input-field" value={form.glpi_password || ""} onChange={(e) => set("glpi_password", e.target.value)} />
+                </div>
+              </div>
+              <div className="flex justify-start">
+                <button type="button" className="btn-success px-4 py-2 text-xs font-semibold" disabled={testingGlpi} onClick={testGlpi}>
+                  {testingGlpi ? "Conectando..." : "Probar conexión con GLPI"}
+                </button>
               </div>
             </div>
           )}

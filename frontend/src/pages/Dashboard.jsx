@@ -51,17 +51,27 @@ function TopList({ title, items, unit, icon }) {
   );
 }
 
+const CHANGE_META = {
+  program_installed: { label: "Instalado", cls: "badge-online" },
+  program_removed: { label: "Desinstalado", cls: "badge-offline" },
+  program_updated: { label: "Actualizado", cls: "badge-info" },
+  ram_changed: { label: "RAM", cls: "badge-warning" },
+  cpu_changed: { label: "CPU", cls: "badge-warning" },
+  storage_changed: { label: "Discos", cls: "badge-info" },
+};
+
 export default function DashboardPage() {
   const [data, setData] = useState(null);
+  const [changes, setChanges] = useState([]);
   const [error, setError] = useState("");
   const navigate = useNavigate();
 
   const load = useCallback(
     () =>
-      api
-        .getDashboard()
-        .then(setData)
-        .catch((err) => setError(err.message || "No se pudo cargar el dashboard.")),
+      Promise.all([
+        api.getDashboard().then(setData),
+        api.getRecentChanges().then(setChanges).catch(() => setChanges([])),
+      ]).catch((err) => setError(err.message || "No se pudo cargar el dashboard.")),
     []
   );
 
@@ -93,9 +103,15 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div>
-        <h1 className="text-2xl font-bold text-white">Dashboard</h1>
-        <p className="text-dark-400 text-sm mt-1">Resumen general del estado de los equipos</p>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+          <p className="text-dark-400 text-sm mt-1">Resumen general del estado de los equipos</p>
+        </div>
+        <button onClick={() => navigate("/tv")} className="btn-primary flex items-center gap-2" title="Vista para monitor del área de TI">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M4 13h16M4 17h16M4 5h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1z" /></svg>
+          Modo TV
+        </button>
       </div>
 
       {/* Stat Cards */}
@@ -209,6 +225,29 @@ export default function DashboardPage() {
           </div>
         ) : (
           <div className="text-center py-8 text-dark-500 text-sm">Sin alertas activas 🎉</div>
+        )}
+      </div>
+
+      {/* Cambios recientes (hardware/software) */}
+      <div className="glass-card p-6">
+        <h3 className="text-lg font-semibold text-white mb-1">Cambios Recientes</h3>
+        <p className="text-xs text-dark-500 mb-4">Software instalado/desinstalado y cambios de hardware detectados en la oficina</p>
+        {changes.length ? (
+          <div className="space-y-2 max-h-80 overflow-y-auto">
+            {changes.slice(0, 15).map((c) => {
+              const meta = CHANGE_META[c.change_type] || { label: c.change_type, cls: "badge-info" };
+              return (
+                <div key={c.id} onClick={() => navigate(`/devices/${c.device_id}`)}
+                  className="flex items-center gap-3 p-3 rounded-xl bg-dark-700/30 hover:bg-dark-700/50 cursor-pointer transition-colors">
+                  <span className={`${meta.cls} flex-shrink-0`}>{meta.label}</span>
+                  <p className="text-sm text-dark-200 flex-1 truncate">{c.details}</p>
+                  <span className="text-[11px] text-dark-500 flex-shrink-0">{timeAgo(c.created_at)}</span>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-center py-8 text-dark-500 text-sm">Sin cambios detectados aún</div>
         )}
       </div>
     </div>

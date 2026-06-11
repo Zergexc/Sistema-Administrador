@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings as app_settings
 from .database import SessionLocal
-from .routes import alerts, auth, devices, diagnostics, inventory
+from .routes import alerts, auth, devices, diagnostics, inventory, glpi
 from .routes import settings as settings_routes
 from .routes import wol, ws
 from .services import maintenance
@@ -81,6 +81,7 @@ app.include_router(alerts.router)
 app.include_router(wol.router)
 app.include_router(settings_routes.router)
 app.include_router(inventory.router)
+app.include_router(glpi.router)
 app.include_router(ws.router)
 
 

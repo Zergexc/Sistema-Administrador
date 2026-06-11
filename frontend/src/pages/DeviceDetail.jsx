@@ -16,8 +16,54 @@ const TABS = [
   ["energia", "Energía"],
   ["discos", "Discos"],
   ["red", "Red"],
+  ["cambios", "Cambios"],
   ["historial", "Historial"],
 ];
+
+// Acciones remotas que el panel puede enviar al agente.
+const REMOTE_ACTIONS = {
+  restart: {
+    label: "Reiniciar",
+    confirm: "Se reiniciará el equipo. El usuario verá un aviso con cuenta regresiva.",
+    btn: "btn-primary",
+    hasDelay: true,
+  },
+  shutdown: {
+    label: "Apagar",
+    confirm: "Se apagará el equipo. El usuario verá un aviso con cuenta regresiva.",
+    btn: "btn-danger",
+    hasDelay: true,
+  },
+  logoff: {
+    label: "Cerrar sesión",
+    confirm: "Se cerrarán todas las sesiones de usuario abiertas en el equipo.",
+    btn: "btn-danger",
+    hasDelay: false,
+  },
+  message: {
+    label: "Enviar mensaje",
+    confirm: "El mensaje aparecerá como aviso emergente en el equipo.",
+    btn: "btn-primary",
+    hasDelay: false,
+  },
+};
+
+const CHANGE_LABEL = {
+  program_installed: { label: "Programa instalado", dot: "bg-emerald-400", color: "text-emerald-400" },
+  program_removed: { label: "Programa desinstalado", dot: "bg-red-400", color: "text-red-400" },
+  program_updated: { label: "Programa actualizado", dot: "bg-accent-400", color: "text-accent-400" },
+  ram_changed: { label: "Cambio de RAM", dot: "bg-amber-400", color: "text-amber-400" },
+  cpu_changed: { label: "Cambio de CPU", dot: "bg-amber-400", color: "text-amber-400" },
+  storage_changed: { label: "Cambio de almacenamiento", dot: "bg-cyan-400", color: "text-cyan-400" },
+};
+
+const TASK_LABEL = {
+  diagnostic: "Diagnóstico",
+  restart: "Reinicio",
+  shutdown: "Apagado",
+  logoff: "Cierre de sesión",
+  message: "Mensaje",
+};
 
 const Spinner = () => (
   <div className="flex items-center justify-center py-32 animate-fade-in">
@@ -83,6 +129,13 @@ export default function DeviceDetailPage() {
   const [programSearch, setProgramSearch] = useState("");
   const [powerEvents, setPowerEvents] = useState(null);
   const [thresholds, setThresholds] = useState({ disk: "", ram: "" });
+  const [changes, setChanges] = useState(null);
+  const [actionsHistory, setActionsHistory] = useState(null);
+
+  // Modal de confirmación de acción remota.
+  const [pendingAction, setPendingAction] = useState(null); // clave de REMOTE_ACTIONS
+  const [actionMessage, setActionMessage] = useState("");
+  const [actionDelay, setActionDelay] = useState(60);
 
   const load = useCallback(() => {
     api
@@ -114,6 +167,12 @@ export default function DeviceDetailPage() {
   useEffect(() => {
     if (tab === "energia" && powerEvents === null) api.getPowerEvents(id).then(setPowerEvents).catch(() => setPowerEvents([]));
   }, [tab, id, powerEvents]);
+  useEffect(() => {
+    if (tab === "cambios" && changes === null) api.getDeviceChanges(id).then(setChanges).catch(() => setChanges([]));
+  }, [tab, id, changes]);
+  useEffect(() => {
+    if (tab === "historial" && actionsHistory === null) api.getDeviceActions(id).then(setActionsHistory).catch(() => setActionsHistory([]));
+  }, [tab, id, actionsHistory]);
 
   const filteredPrograms = useMemo(() => {
     if (!programs) return [];
@@ -157,6 +216,23 @@ export default function DeviceDetailPage() {
         alert_ram_min_free_gb: thresholds.ram === "" ? null : Number(thresholds.ram),
       }), "Umbrales guardados").then(load);
 
+  const openAction = (key) => {
+    setActionMessage("");
+    setActionDelay(60);
+    setPendingAction(key);
+  };
+
+  const submitAction = () =>
+    runAction(`act-${pendingAction}`, async () => {
+      await api.sendAction(id, pendingAction, {
+        message: actionMessage.trim() || null,
+        delaySeconds: Number(actionDelay) || 60,
+      });
+      setPendingAction(null);
+      setActionsHistory(null); // refresca el historial de acciones
+      return { message: `${REMOTE_ACTIONS[pendingAction].label}: enviado al agente (se ejecuta en segundos).` };
+    });
+
   const topProcesses = payload.top_processes || [];
   const network = payload.network || {};
 
@@ -192,6 +268,13 @@ export default function DeviceDetailPage() {
               <button type="button" className="btn-success" disabled={!!actionLoading} onClick={() => runAction("wol", () => api.sendWol(id), "WOL enviado")}>
                 {actionLoading === "wol" ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : "Encender WOL"}
               </button>
+              {Object.entries(REMOTE_ACTIONS).map(([key, meta]) => (
+                <button key={key} type="button" className={meta.btn} disabled={!!actionLoading || !online}
+                  title={!online ? "El equipo está offline" : meta.label}
+                  onClick={() => openAction(key)}>
+                  {meta.label}
+                </button>
+              ))}
             </div>
           )}
         </div>
@@ -443,21 +526,114 @@ export default function DeviceDetailPage() {
         </div>
       )}
 
+      {/* === Cambios === */}
+      {tab === "cambios" && (
+        <div className="glass-card p-6">
+          <h3 className="text-lg font-semibold text-white mb-1">Cambios Detectados</h3>
+          <p className="text-xs text-dark-500 mb-4">
+            Hardware y software comparado entre reportes del agente. El software se revisa en cada escaneo completo.
+          </p>
+          {changes === null ? <Spinner /> : changes.length ? (
+            <div className="relative pl-4 border-l border-dark-700/50 space-y-4 max-h-[60vh] overflow-y-auto">
+              {changes.map((c) => {
+                const meta = CHANGE_LABEL[c.change_type] || { label: c.change_type, dot: "bg-dark-400", color: "text-dark-300" };
+                return (
+                  <div key={c.id} className="relative">
+                    <span className={`absolute -left-[1.30rem] top-1 w-2.5 h-2.5 rounded-full ${meta.dot}`} />
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div>
+                        <span className={`text-xs font-semibold uppercase ${meta.color}`}>{meta.label}</span>
+                        <p className="text-sm text-dark-200 mt-0.5">{c.details}</p>
+                      </div>
+                      <span className="text-xs text-dark-500 flex-shrink-0">{formatDateTime(c.created_at)}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : <p className="text-dark-500 text-sm text-center py-8">Sin cambios detectados. Aparecerán cuando se instale/desinstale software o cambie el hardware.</p>}
+        </div>
+      )}
+
       {/* === Historial === */}
       {tab === "historial" && (
-        <div className="glass-card p-6">
-          <h3 className="text-lg font-semibold text-white mb-4">Historial de Diagnósticos</h3>
-          {data.diagnostics_history?.length ? (
-            <div className="space-y-2">
-              {data.diagnostics_history.map((diag) => (
-                <div key={diag.id} className="flex items-center gap-4 p-3 rounded-xl bg-dark-700/30">
-                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${diag.alerts_detected ? "bg-amber-400" : "bg-emerald-400"}`} />
-                  <p className="text-sm text-dark-200 truncate flex-1">{diag.summary || "Diagnóstico"}</p>
-                  <span className="text-xs text-dark-500 flex-shrink-0">{formatDateTime(diag.created_at)}</span>
-                </div>
-              ))}
+        <div className="space-y-5">
+          <div className="glass-card p-6">
+            <h3 className="text-lg font-semibold text-white mb-4">Acciones Remotas</h3>
+            {actionsHistory === null ? <Spinner /> : actionsHistory.length ? (
+              <div className="space-y-2">
+                {actionsHistory.map((t) => (
+                  <div key={t.id} className="flex items-center gap-4 p-3 rounded-xl bg-dark-700/30 flex-wrap">
+                    <span className={t.status === "done" ? "badge-online" : "badge-warning"}>
+                      {t.status === "done" ? "Ejecutada" : "Pendiente"}
+                    </span>
+                    <p className="text-sm text-dark-200 flex-1">{TASK_LABEL[t.task_type] || t.task_type}</p>
+                    <span className="text-xs text-dark-500 flex-shrink-0">{formatDateTime(t.created_at)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="text-dark-500 text-sm text-center py-4">Sin acciones enviadas a este equipo</p>}
+          </div>
+
+          <div className="glass-card p-6">
+            <h3 className="text-lg font-semibold text-white mb-4">Historial de Diagnósticos</h3>
+            {data.diagnostics_history?.length ? (
+              <div className="space-y-2">
+                {data.diagnostics_history.map((diag) => (
+                  <div key={diag.id} className="flex items-center gap-4 p-3 rounded-xl bg-dark-700/30">
+                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${diag.alerts_detected ? "bg-amber-400" : "bg-emerald-400"}`} />
+                    <p className="text-sm text-dark-200 truncate flex-1">{diag.summary || "Diagnóstico"}</p>
+                    <span className="text-xs text-dark-500 flex-shrink-0">{formatDateTime(diag.created_at)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="text-dark-500 text-sm text-center py-8">Sin historial</p>}
+          </div>
+        </div>
+      )}
+
+      {/* === Modal de confirmación de acción remota === */}
+      {pendingAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in"
+          onClick={(e) => { if (e.target === e.currentTarget) setPendingAction(null); }}>
+          <div className="glass-card p-6 w-full max-w-md animate-slide-up">
+            <h3 className="text-lg font-semibold text-white mb-2">
+              {REMOTE_ACTIONS[pendingAction].label} — {device.hostname}
+            </h3>
+            <p className="text-sm text-dark-400 mb-4">{REMOTE_ACTIONS[pendingAction].confirm}</p>
+
+            {REMOTE_ACTIONS[pendingAction].hasDelay && (
+              <div className="mb-4">
+                <label className="text-sm text-dark-300 mb-1.5 block">Cuenta regresiva (segundos)</label>
+                <input type="number" min="0" max="3600" className="input-field" value={actionDelay}
+                  onChange={(e) => setActionDelay(e.target.value)} />
+              </div>
+            )}
+            {pendingAction === "message" ? (
+              <div className="mb-4">
+                <label className="text-sm text-dark-300 mb-1.5 block">Mensaje para el usuario *</label>
+                <textarea className="input-field min-h-[90px]" placeholder="Ej: El equipo se reiniciará a las 5 PM por mantenimiento."
+                  value={actionMessage} onChange={(e) => setActionMessage(e.target.value)} />
+              </div>
+            ) : (
+              <div className="mb-4">
+                <label className="text-sm text-dark-300 mb-1.5 block">Aviso para el usuario (opcional)</label>
+                <input type="text" className="input-field" placeholder="Texto del aviso en pantalla"
+                  value={actionMessage} onChange={(e) => setActionMessage(e.target.value)} />
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3">
+              <button className="text-sm text-dark-400 hover:text-white px-4 py-2" onClick={() => setPendingAction(null)}>
+                Cancelar
+              </button>
+              <button className={REMOTE_ACTIONS[pendingAction].btn}
+                disabled={!!actionLoading || (pendingAction === "message" && !actionMessage.trim())}
+                onClick={submitAction}>
+                {actionLoading === `act-${pendingAction}` ? "Enviando..." : `Confirmar ${REMOTE_ACTIONS[pendingAction].label.toLowerCase()}`}
+              </button>
             </div>
-          ) : <p className="text-dark-500 text-sm text-center py-8">Sin historial</p>}
+          </div>
         </div>
       )}
     </div>

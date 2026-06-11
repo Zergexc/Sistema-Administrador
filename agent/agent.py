@@ -20,7 +20,7 @@ def _base_dir():
 
 # El config vive siempre junto al .exe/.py, sin importar desde dónde se lance.
 CONFIG_FILE = os.path.join(_base_dir(), "config.json")
-AGENT_VERSION = "0.2.0"
+AGENT_VERSION = "0.3.0"
 DEFAULT_CONFIG = {
     "server_url": "http://127.0.0.1:8000",
     "report_interval_seconds": 120,
@@ -28,6 +28,8 @@ DEFAULT_CONFIG = {
     "token": "",
     # Cada cuántos ciclos recolectar métricas pesadas (programas, eventos, etc.).
     "full_scan_every": 15,
+    # Cada cuántos segundos consultar tareas remotas (reinicio, mensaje, etc.).
+    "poll_tasks_seconds": 15,
 }
 
 IS_WINDOWS = platform.system() == "Windows"
@@ -486,19 +488,229 @@ def collect_payload(config, full_scan=False):
     return payload
 
 
-def post(config, endpoint, payload):
+def _auth_headers(config):
     headers = {}
     if config.get("token"):
         headers["Authorization"] = f"Bearer {config['token']}"
         headers["X-API-Key"] = config["token"]
+    return headers
+
+
+def post(config, endpoint, payload):
     response = requests.post(
         f"{config['server_url'].rstrip('/')}{endpoint}",
         json=payload,
-        headers=headers,
+        headers=_auth_headers(config),
         timeout=30,
     )
     response.raise_for_status()
     return response.json()
+
+
+def get(config, endpoint):
+    response = requests.get(
+        f"{config['server_url'].rstrip('/')}{endpoint}",
+        headers=_auth_headers(config),
+        timeout=15,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+# ---------------------------------------------------------------------------
+# Acciones remotas (encoladas desde el panel)
+# ---------------------------------------------------------------------------
+def _show_message(text: str) -> bool:
+    """Muestra un aviso emergente al usuario usando WTSSendMessageW de Windows API.
+
+    Esto permite que un proceso corriendo como SYSTEM (Sesión 0) muestre
+    un mensaje interactivo en la sesión activa del usuario.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        wtsapi32 = ctypes.windll.wtsapi32
+        kernel32 = ctypes.windll.kernel32
+
+        # Firma de WTSSendMessageW:
+        wtsapi32.WTSSendMessageW.argtypes = [
+            wintypes.HANDLE,   # hServer
+            wintypes.DWORD,    # SessionId
+            wintypes.LPWSTR,   # pTitle
+            wintypes.DWORD,    # TitleLength
+            wintypes.LPWSTR,   # pMessage
+            wintypes.DWORD,    # MessageLength
+            wintypes.DWORD,    # Style
+            wintypes.DWORD,    # Timeout
+            ctypes.POINTER(wintypes.DWORD), # pResponse
+            wintypes.BOOL      # bWait
+        ]
+        wtsapi32.WTSSendMessageW.restype = wintypes.BOOL
+
+        # Obtener la sesión activa de la consola.
+        active_session = kernel32.WTSGetActiveConsoleSessionId()
+        if active_session in (0, 0xFFFFFFFF):
+            active_session = 1
+
+        title = "Aviso del Departamento de TI"
+        server_handle = None 
+        style = 0x00000040  # MB_OK | MB_ICONINFORMATION
+        timeout = 0
+        response = wintypes.DWORD()
+        
+        title_w = ctypes.c_wchar_p(title)
+        msg_w = ctypes.c_wchar_p(text)
+        
+        title_len = len(title) * 2
+        msg_len = len(text) * 2
+        
+        # Llamar a la API de forma asíncrona (bWait = False) para no bloquear al agente
+        success = wtsapi32.WTSSendMessageW(
+            server_handle,
+            active_session,
+            title_w,
+            title_len,
+            msg_w,
+            msg_len,
+            style,
+            timeout,
+            ctypes.byref(response),
+            False
+        )
+        if success:
+            return True
+    except Exception as exc:
+        print(f"Error WTSSendMessageW: {exc}", flush=True)
+
+    # Fallback 1: PowerShell con Windows Forms MessageBox
+    escaped = text.replace("'", "''")
+    ps_cmd = (
+        "Add-Type -AssemblyName System.Windows.Forms; "
+        "[System.Windows.Forms.MessageBox]::Show("
+        f"'{escaped}', 'Aviso del Departamento de TI', "
+        "'OK', 'Information')"
+    )
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
+            capture_output=True,
+            timeout=30,
+            creationflags=_NO_WINDOW,
+        )
+        if proc.returncode == 0:
+            return True
+    except Exception:
+        pass
+
+    # Fallback 2: msg.exe clásico
+    try:
+        proc = subprocess.run(
+            ["msg", "*", "/time:120", text],
+            capture_output=True,
+            timeout=15,
+            creationflags=_NO_WINDOW,
+        )
+        return proc.returncode == 0
+    except Exception:
+        return False
+
+
+def _logoff_all_sessions() -> str:
+    """Cierra la sesión de todos los usuarios interactivos."""
+    try:
+        # Obtener los session IDs de explorer.exe usando PowerShell
+        # Esto evita parsear quser en diferentes idiomas.
+        ps_cmd = "(Get-Process -Name explorer -ErrorAction SilentlyContinue).SessionId | Select-Object -Unique"
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            creationflags=_NO_WINDOW,
+        )
+        session_ids = [line.strip() for line in proc.stdout.splitlines() if line.strip().isdigit()]
+        if not session_ids:
+            return "sin sesiones activas"
+        
+        closed = []
+        for sid in session_ids:
+            if sid == "0":
+                continue
+            subprocess.run(
+                ["logoff", sid],
+                timeout=15,
+                creationflags=_NO_WINDOW,
+            )
+            closed.append(sid)
+        return f"sesiones cerradas: {closed}" if closed else "sin sesiones activas"
+    except Exception as exc:
+        return f"error: {exc}"
+
+
+def execute_task(config, task):
+    """Ejecuta una tarea remota del panel y reporta el resultado."""
+    ttype = task.get("task_type")
+    try:
+        payload = json.loads(task.get("payload") or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    delay = max(0, int(payload.get("delay_seconds", 30)))
+    text = (payload.get("message") or "").strip()
+
+    def complete(result: dict):
+        try:
+            post(config, f"/api/tasks/{task['id']}/complete", result)
+        except Exception as exc:
+            print(f"No se pudo completar la tarea {task['id']}: {exc}", flush=True)
+
+    if ttype == "diagnostic":
+        complete({"status": "ok", "detail": "diagnóstico completo ejecutado"})
+        run_once(config, full_scan=True)
+    elif ttype in ("restart", "shutdown"):
+        accion = "Reinicio" if ttype == "restart" else "Apagado"
+        comment = text or f"{accion} programado por TI en {delay} segundos. Guarda tu trabajo."
+        # Muestra aviso emergente al usuario ANTES del shutdown.
+        if delay > 0:
+            _show_message(comment)
+        # Se completa ANTES de ejecutar: el equipo va a apagarse.
+        complete({"status": "ok", "detail": f"{ttype} en {delay}s"})
+        flag = "/r" if ttype == "restart" else "/s"
+        try:
+            proc = subprocess.run(
+                ["shutdown", flag, "/f", "/t", str(delay), "/c", comment[:500]],
+                capture_output=True,
+                timeout=15,
+            )
+            if proc.returncode != 0:
+                # Fallback: PowerShell con -Force.
+                ps_flag = "Restart-Computer" if ttype == "restart" else "Stop-Computer"
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-Command", f"{ps_flag} -Force"],
+                    timeout=15,
+                    creationflags=_NO_WINDOW,
+                )
+        except Exception as exc:
+            print(f"Error en {ttype}: {exc}", flush=True)
+    elif ttype == "logoff":
+        complete({"status": "ok", "detail": _logoff_all_sessions()})
+    elif ttype == "message":
+        shown = _show_message(text or "Aviso del departamento de TI")
+        complete(
+            {
+                "status": "ok" if shown else "error",
+                "detail": "mensaje mostrado" if shown else "msg.exe no disponible",
+            }
+        )
+    else:
+        complete({"status": "ignored", "detail": f"tipo no soportado: {ttype}"})
+
+
+def poll_and_run_tasks(config, device_id):
+    data = get(config, f"/api/devices/{device_id}/tasks")
+    for task in data.get("pending_tasks", []):
+        print(f"Ejecutando tarea {task['id']} ({task['task_type']})", flush=True)
+        execute_task(config, task)
 
 
 def run_once(config, full_scan=False):
@@ -522,20 +734,34 @@ def run_once(config, full_scan=False):
         f"diagnostic={diagnostic['diagnostic_id']}",
         flush=True,
     )
+    return device["id"]
 
 
 def main():
     config = load_config()
     interval = int(config.get("report_interval_seconds", 120))
     full_every = max(1, int(config.get("full_scan_every", 15)))
+    poll_every = max(5, int(config.get("poll_tasks_seconds", 15)))
     cycle = 0
+    device_id = None
     while True:
         try:
-            run_once(config, full_scan=(cycle % full_every == 0))
+            device_id = run_once(config, full_scan=(cycle % full_every == 0))
         except Exception as exc:
             print(f"Error agente: {exc}", flush=True)
         cycle += 1
-        time.sleep(interval)
+        # Entre reportes, consulta tareas remotas con frecuencia para que un
+        # reinicio o mensaje desde el panel no espere al siguiente ciclo.
+        waited = 0
+        while waited < interval:
+            step = min(poll_every, interval - waited)
+            time.sleep(step)
+            waited += step
+            if device_id is not None:
+                try:
+                    poll_and_run_tasks(config, device_id)
+                except Exception as exc:
+                    print(f"Error consultando tareas: {exc}", flush=True)
 
 
 if __name__ == "__main__":

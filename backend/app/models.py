@@ -78,6 +78,9 @@ class Device(Base):
     disks: Mapped[list["DiskInfo"]] = relationship(
         "DiskInfo", back_populates="device", cascade="all, delete-orphan"
     )
+    changes: Mapped[list["ChangeEvent"]] = relationship(
+        "ChangeEvent", back_populates="device", cascade="all, delete-orphan"
+    )
 
 
 class Diagnostic(Base):
@@ -131,6 +134,14 @@ class Setting(Base):
     smtp_from: Mapped[str | None] = mapped_column(String(255), nullable=True)
     alert_email_to: Mapped[str | None] = mapped_column(String(512), nullable=True)
     webhook_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    # Integración GLPI
+    glpi_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    glpi_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    glpi_app_token: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    glpi_user_token: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    glpi_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    glpi_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=utcnow, onupdate=utcnow
@@ -226,6 +237,24 @@ class DiskInfo(Base):
     last_updated: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     device: Mapped["Device"] = relationship("Device", back_populates="disks")
+
+
+class ChangeEvent(Base):
+    """Cambios de hardware/software detectados entre reportes del agente."""
+
+    __tablename__ = "change_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), index=True)
+    # program_installed, program_removed, program_updated,
+    # ram_changed, cpu_changed, storage_changed
+    change_type: Mapped[str] = mapped_column(String(32), index=True)
+    old_value: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    new_value: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    details: Mapped[str] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+    device: Mapped["Device"] = relationship("Device", back_populates="changes")
 
 
 class InventoryCategory(Base):

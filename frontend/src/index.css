@@ -240,3 +240,22 @@
     transition: width 0.7s ease-out;
   }
 }
+
+/* Impresión de etiquetas QR: solo se imprime la hoja .print-area */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-area,
+  .print-area * {
+    visibility: visible;
+  }
+  .print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    border-radius: 0;
+    padding: 0;
+  }
+}

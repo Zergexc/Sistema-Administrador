@@ -18,6 +18,37 @@ def create_diagnostic_task(db: Session, device_id: int) -> models.Task:
     return task
 
 
+# Acciones remotas que el panel puede encolar para el agente.
+REMOTE_ACTIONS = {"restart", "shutdown", "logoff", "message"}
+
+
+def create_action_task(
+    db: Session,
+    device_id: int,
+    action: str,
+    message: str | None = None,
+    delay_seconds: int = 30,
+    requested_by: str = "panel",
+) -> models.Task:
+    """Encola una acción remota (reiniciar, apagar, cerrar sesión, mensaje)."""
+    task = models.Task(
+        device_id=device_id,
+        task_type=action,
+        status="pending",
+        payload=json.dumps(
+            {
+                "message": message or "",
+                "delay_seconds": delay_seconds,
+                "requested_by": requested_by,
+            }
+        ),
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    return task
+
+
 def get_pending_tasks(db: Session, device_id: int) -> list[models.Task]:
     return (
         db.query(models.Task)

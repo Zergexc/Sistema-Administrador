@@ -210,6 +210,12 @@ class SettingsOut(BaseModel):
     smtp_from: str | None = None
     alert_email_to: str | None = None
     webhook_url: str | None = None
+    glpi_enabled: bool = False
+    glpi_url: str | None = None
+    glpi_app_token: str | None = None
+    glpi_user_token: str | None = None
+    glpi_username: str | None = None
+    glpi_password: str | None = None
 
 
 class SettingsUpdate(BaseModel):
@@ -226,6 +232,12 @@ class SettingsUpdate(BaseModel):
     smtp_from: str | None = None
     alert_email_to: str | None = None
     webhook_url: str | None = None
+    glpi_enabled: bool = False
+    glpi_url: str | None = None
+    glpi_app_token: str | None = None
+    glpi_user_token: str | None = None
+    glpi_username: str | None = None
+    glpi_password: str | None = None
 
 
 class TaskOut(BaseModel):
@@ -239,6 +251,26 @@ class TaskOut(BaseModel):
     result: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class ActionRequest(BaseModel):
+    """Acción remota encolada desde el panel hacia un agente."""
+
+    action: str  # restart | shutdown | logoff | message
+    message: str | None = None
+    delay_seconds: int = 30
+
+
+class ChangeEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    device_id: int
+    change_type: str
+    old_value: str | None
+    new_value: str | None
+    details: str
+    created_at: datetime
 
 
 # ---------------------------------------------------------------------------

@@ -3,5 +3,6 @@
   "report_interval_seconds": 120,
   "hostname_override": "",
   "token": "",
-  "full_scan_every": 15
+  "full_scan_every": 15,
+  "poll_tasks_seconds": 15
 }

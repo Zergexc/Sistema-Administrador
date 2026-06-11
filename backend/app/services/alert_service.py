@@ -72,13 +72,16 @@ def evaluate_alerts(db: Session, device: models.Device, settings: models.Setting
                 notify_alert(settings, device.hostname, code, message)
 
     # Resuelve automáticamente las alertas que ya no aplican.
+    # HARDWARE_CHANGE es persistente: solo se resuelve manualmente (el cambio
+    # no "desaparece" en el siguiente reporte, alguien debe revisarlo).
+    persistent_codes = {"HARDWARE_CHANGE"}
     stale_alerts = (
         db.query(models.Alert)
         .filter(models.Alert.device_id == device.id, models.Alert.is_active.is_(True))
         .all()
     )
     for alert in stale_alerts:
-        if alert.code not in active_codes:
+        if alert.code not in active_codes and alert.code not in persistent_codes:
             alert.is_active = False
             alert.resolved_at = utcnow()
             alert.resolved_by = "auto"

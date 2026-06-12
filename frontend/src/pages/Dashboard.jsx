@@ -161,12 +161,43 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {/* Top consumo */}
-      <div className="grid gap-5 lg:grid-cols-2">
+      {/* Top consumo y Potencia */}
+      <div className="grid gap-5 lg:grid-cols-3">
         <TopList title="Top consumo RAM" items={data.top_ram} unit="%"
           icon={<svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M5 12h14M5 12a2 2 0 01-2-2V7a2 2 0 012-2h14a2 2 0 012 2v3a2 2 0 01-2 2M5 12a2 2 0 00-2 2v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 00-2-2m-2-4h.01M17 16h.01" /></svg>} />
         <TopList title="Top consumo CPU" items={data.top_cpu} unit="%"
           icon={<svg className="w-5 h-5 text-accent-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" /></svg>} />
+        
+        <div className="glass-card p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <svg className="w-5 h-5 text-cyber-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            <h3 className="text-base font-semibold text-white">Equipos más Potentes</h3>
+          </div>
+          {data.top_powerful_devices?.length ? (
+            <div className="space-y-3">
+              {data.top_powerful_devices.map((d, index) => (
+                <div key={d.id} className="flex items-center justify-between p-2 rounded-xl bg-dark-700/20 hover:bg-dark-700/40 cursor-pointer transition-colors" onClick={() => navigate(`/devices/${d.id}`)}>
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="text-xs font-bold text-dark-500 font-mono w-4">#{index + 1}</span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-white truncate">{d.hostname}</p>
+                      <p className="text-[10px] text-dark-400 truncate">{d.cpu_model || "CPU Desconocido"}</p>
+                    </div>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <span className="text-xs font-semibold text-accent-400 bg-accent-500/10 border border-accent-500/20 px-2 py-0.5 rounded-md">
+                      {d.ram_total_gb ? `${d.ram_total_gb} GB` : "—"} RAM
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-dark-500 text-sm text-center py-6">Sin datos</p>
+          )}
+        </div>
       </div>
 
       {/* Distribución SO + Disco + Red */}
@@ -176,16 +207,16 @@ export default function DashboardPage() {
           <OsDonut data={data.os_distribution} />
         </div>
 
-        <div className="glass-card p-6">
-          <h3 className="text-base font-semibold text-white mb-4">Almacenamiento Total</h3>
+        <div className="glass-card p-6 cursor-pointer hover:border-accent-500/50 transition-colors" onClick={() => navigate("/inventory")}>
+          <h3 className="text-base font-semibold text-white mb-4">Licencias por Vencer</h3>
           <div className="flex items-end justify-between mb-2">
-            <span className="text-3xl font-bold text-white">{formatGB(disk.used_gb)}</span>
-            <span className="text-sm text-dark-400">de {formatGB(disk.total_gb)}</span>
+            <span className={`text-3xl font-bold ${data.expiring_licenses_count > 0 ? "text-amber-400" : "text-white"}`}>{data.expiring_licenses_count || 0}</span>
+            <span className="text-sm text-dark-400">próximos 30 días</span>
           </div>
           <div className="progress-bar mb-3">
-            <div className={`progress-fill ${diskPct > 85 ? "bg-red-500" : diskPct > 70 ? "bg-amber-500" : "bg-accent-500"}`} style={{ width: `${diskPct}%` }} />
+            <div className={`progress-fill ${data.expiring_licenses_count > 0 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: data.expiring_licenses_count > 0 ? "100%" : "0%" }} />
           </div>
-          <p className="text-xs text-dark-500">{formatGB(disk.free_gb)} libres en toda la oficina</p>
+          <p className="text-xs text-dark-500">{data.expiring_licenses_count > 0 ? "Se requiere renovación" : "Todas las licencias al día"}</p>
         </div>
 
         <div className="glass-card p-6">
@@ -205,27 +236,55 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Alertas recientes */}
-      <div className="glass-card p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-white">Alertas Recientes</h3>
-          <button onClick={() => navigate("/alerts")} className="text-xs text-accent-400 hover:text-accent-300 font-medium">Ver todas →</button>
-        </div>
-        {data.recent_alerts?.length ? (
-          <div className="space-y-2">
-            {data.recent_alerts.map((a) => (
-              <div key={a.id} onClick={() => navigate(`/devices/${a.device_id}`)}
-                className="flex items-center gap-3 p-3 rounded-xl bg-dark-700/30 hover:bg-dark-700/50 cursor-pointer transition-colors">
-                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${a.severity === "critical" ? "bg-red-400" : "bg-amber-400"}`} />
-                <span className={`badge-${a.severity === "critical" ? "offline" : "warning"} flex-shrink-0`}>{a.code}</span>
-                <p className="text-sm text-dark-200 flex-1 truncate">{a.message}</p>
-                <span className="text-[11px] text-dark-500 flex-shrink-0">{timeAgo(a.created_at)}</span>
-              </div>
-            ))}
+      <div className="grid gap-5 lg:grid-cols-2">
+        {/* Alertas recientes */}
+        <div className="glass-card p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-white">Alertas Recientes</h3>
+            <button onClick={() => navigate("/alerts")} className="text-xs text-accent-400 hover:text-accent-300 font-medium">Ver todas →</button>
           </div>
-        ) : (
-          <div className="text-center py-8 text-dark-500 text-sm">Sin alertas activas 🎉</div>
-        )}
+          {data.recent_alerts?.length ? (
+            <div className="space-y-2">
+              {data.recent_alerts.map((a) => (
+                <div key={a.id} onClick={() => navigate(`/devices/${a.device_id}`)}
+                  className="flex items-center gap-3 p-3 rounded-xl bg-dark-700/30 hover:bg-dark-700/50 cursor-pointer transition-colors">
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${a.severity === "critical" ? "bg-red-400" : "bg-amber-400"}`} />
+                  <span className={`badge-${a.severity === "critical" ? "offline" : "warning"} flex-shrink-0`}>{a.code}</span>
+                  <p className="text-sm text-dark-200 flex-1 truncate">{a.message}</p>
+                  <span className="text-[11px] text-dark-500 flex-shrink-0">{timeAgo(a.created_at)}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-8 text-dark-500 text-sm">Sin alertas activas 🎉</div>
+          )}
+        </div>
+
+        {/* Licencias por vencer */}
+        <div className="glass-card p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-white">Vencimientos de Licencias</h3>
+            <button onClick={() => navigate("/inventory")} className="text-xs text-accent-400 hover:text-accent-300 font-medium">Ver todas →</button>
+          </div>
+          {data.expiring_licenses?.length ? (
+            <div className="space-y-2">
+              {data.expiring_licenses.map((l) => (
+                <div key={l.id} onClick={() => navigate(`/inventory/${l.id}`)}
+                  className="flex items-center gap-3 p-3 rounded-xl bg-dark-700/30 hover:bg-dark-700/50 cursor-pointer transition-colors">
+                  <span className="w-2 h-2 rounded-full flex-shrink-0 bg-amber-400" />
+                  <span className="badge-warning flex-shrink-0">EXPIRA</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-white truncate">{l.name}</p>
+                    <p className="text-xs text-dark-400 truncate">Equipo: {l.model || "—"} | Asignado: {l.assigned_to || "—"}</p>
+                  </div>
+                  <span className="text-[11px] text-dark-500 flex-shrink-0">{l.warranty_until ? new Date(l.warranty_until).toLocaleDateString("es-MX") : "—"}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-8 text-dark-500 text-sm">Sin licencias por vencer en los próximos 30 días 🎉</div>
+          )}
+        </div>
       </div>
 
       {/* Cambios recientes (hardware/software) */}

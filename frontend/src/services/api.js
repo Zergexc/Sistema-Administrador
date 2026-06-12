@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000/api";
+const API_BASE = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:8000/api`;
 const TOKEN_KEY = "ti_token";
 
 export function getToken() {
@@ -25,7 +25,7 @@ async function request(path, options = {}) {
   } catch (error) {
     console.error("Error de red al conectar con el backend:", error);
     throw new Error(
-      "No se pudo conectar con el backend. Verifica que la API esté levantada en http://127.0.0.1:8000."
+      `No se pudo conectar con el backend. Verifica que la API esté levantada en http://${window.location.hostname}:8000.`
     );
   }
 
@@ -75,10 +75,13 @@ export const api = {
   login: (username, password) =>
     request("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),
   me: () => request("/auth/me"),
-  changePassword: (newPassword) =>
+  changePassword: (currentPassword, newPassword) =>
     request("/auth/change-password", {
       method: "POST",
-      body: JSON.stringify({ new_password: newPassword }),
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword,
+      }),
     }),
 
   // --- Usuarios (admin) ---
@@ -93,6 +96,7 @@ export const api = {
   getDashboard: () => request("/dashboard"),
   getDevices: () => request("/devices"),
   getDevice: (id) => request(`/devices/${id}`),
+  deleteDevice: (id) => request(`/devices/${id}`, { method: "DELETE" }),
   updateThresholds: (id, payload) =>
     request(`/devices/${id}/thresholds`, { method: "PUT", body: JSON.stringify(payload) }),
   requestDiagnostic: (id) => request(`/devices/${id}/request-diagnostic`, { method: "POST" }),

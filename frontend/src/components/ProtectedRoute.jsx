@@ -8,10 +8,11 @@ const FullSpinner = () => (
 );
 
 export default function ProtectedRoute({ children, requireAdmin = false }) {
-  const { isAuthenticated, isAdmin, loading } = useAuth();
+  const { isAuthenticated, isAdmin, loading, user } = useAuth();
 
   if (loading) return <FullSpinner />;
   if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (user?.needs_password_change) return <Navigate to="/login" replace />;
   if (requireAdmin && !isAdmin) return <Navigate to="/" replace />;
   return children;
 }

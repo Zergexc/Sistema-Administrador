@@ -59,6 +59,7 @@ def register(
         full_name=payload.full_name,
         hashed_password=hash_password(payload.password),
         role=role,
+        needs_password_change=True,
     )
     db.add(user)
     db.commit()
@@ -72,12 +73,21 @@ def change_password(
     db: Session = Depends(get_db),
     current: models.User = Depends(get_current_user),
 ):
+    current_password = (payload or {}).get("current_password", "")
     new_password = (payload or {}).get("new_password", "")
+    
+    if current_password:
+        if not verify_password(current_password, current.hashed_password):
+            raise HTTPException(
+                status_code=400, detail="La contraseña actual es incorrecta"
+            )
+            
     if len(new_password) < 4:
         raise HTTPException(
             status_code=400, detail="La contraseña debe tener al menos 4 caracteres"
         )
     current.hashed_password = hash_password(new_password)
+    current.needs_password_change = False
     db.commit()
     return {"status": "ok", "message": "Contraseña actualizada"}
 
@@ -110,6 +120,7 @@ def update_user(
         user.is_active = payload.is_active
     if payload.password:
         user.hashed_password = hash_password(payload.password)
+        user.needs_password_change = True
     db.commit()
     db.refresh(user)
     return user

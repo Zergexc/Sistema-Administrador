@@ -10,6 +10,7 @@ import { formatDateTime, formatGB, formatUptime, isDeviceOnline, timeAgo } from 
 
 const TABS = [
   ["resumen", "Resumen"],
+  ["componentes", "Componentes"],
   ["rendimiento", "Rendimiento"],
   ["procesos", "Procesos"],
   ["software", "Software"],
@@ -233,6 +234,46 @@ export default function DeviceDetailPage() {
       return { message: `${REMOTE_ACTIONS[pendingAction].label}: enviado al agente (se ejecuta en segundos).` };
     });
 
+  const handleUnlinkItem = async (item) => {
+    if (!window.confirm(`¿Desvincular el item "${item.name}" de este equipo?`)) return;
+    try {
+      addToast("Desvinculando componente...", "info");
+      // Mantenemos los datos, solo desvinculamos del equipo actual
+      await api.updateItem(item.id, {
+        ...item,
+        device_id: null
+      });
+      addToast("Componente desvinculado con éxito", "success");
+      load(); // Recarga los datos
+    } catch (err) {
+      addToast(err.message || "Error al desvincular", "error");
+    }
+  };
+
+  const handleDeleteItem = async (itemId) => {
+    if (!window.confirm("¿Estás seguro de eliminar este item del inventario permanentemente?")) return;
+    try {
+      addToast("Eliminando componente...", "info");
+      await api.deleteItem(itemId);
+      addToast("Componente eliminado del inventario", "success");
+      load(); // Recarga los datos
+    } catch (err) {
+      addToast(err.message || "Error al eliminar", "error");
+    }
+  };
+
+  const handleDeleteDevice = async () => {
+    if (!window.confirm(`¿Estás seguro de eliminar el equipo "${device.hostname}" permanentemente? Se desvincularán todos los componentes y se borrará todo el historial y alertas asociadas.`)) return;
+    try {
+      addToast("Eliminando equipo...", "info");
+      await api.deleteDevice(id);
+      addToast("Equipo eliminado con éxito", "success");
+      navigate("/devices");
+    } catch (err) {
+      addToast(err.message || "Error al eliminar equipo", "error");
+    }
+  };
+
   const topProcesses = payload.top_processes || [];
   const network = payload.network || {};
 
@@ -275,6 +316,9 @@ export default function DeviceDetailPage() {
                   {meta.label}
                 </button>
               ))}
+              <button type="button" className="btn-danger" disabled={!!actionLoading} onClick={handleDeleteDevice}>
+                Eliminar Equipo
+              </button>
             </div>
           )}
         </div>
@@ -589,6 +633,77 @@ export default function DeviceDetailPage() {
               </div>
             ) : <p className="text-dark-500 text-sm text-center py-8">Sin historial</p>}
           </div>
+        </div>
+      )}
+
+      {/* === Componentes === */}
+      {tab === "componentes" && (
+        <div className="glass-card p-6 space-y-6">
+          <div className="flex justify-between items-center flex-wrap gap-2">
+            <div>
+              <h3 className="text-lg font-semibold text-white">Componentes y Monitores Vinculados</h3>
+              <p className="text-xs text-dark-500 mt-1">Items del inventario asignados a este dispositivo.</p>
+            </div>
+          </div>
+          
+          {data.linked_items?.length ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-dark-700/30 text-left text-xs text-dark-400 uppercase tracking-wider">
+                    <th className="px-4 py-2">Categoría</th>
+                    <th className="px-4 py-2">Nombre</th>
+                    <th className="px-4 py-2">Marca / Modelo</th>
+                    <th className="px-4 py-2">Nro Serie</th>
+                    <th className="px-4 py-2">Estado</th>
+                    {isAdmin && <th className="px-4 py-2 text-right">Acciones</th>}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-dark-700/20">
+                  {data.linked_items.map((it) => (
+                    <tr key={it.id} className="hover:bg-dark-700/20">
+                      <td className="px-4 py-3 text-dark-300 font-medium">{it.category_name}</td>
+                      <td className="px-4 py-3 text-white font-medium hover:text-accent-400 cursor-pointer" onClick={() => navigate(`/inventory/${it.id}`)}>
+                        {it.name}
+                      </td>
+                      <td className="px-4 py-3 text-dark-300">
+                        {it.brand || "—"} {it.model ? `/ ${it.model}` : ""}
+                      </td>
+                      <td className="px-4 py-3 text-dark-400 font-mono text-xs">{it.serial_number || "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className="text-[10px] bg-accent-500/10 text-accent-400 border border-accent-500/20 px-2 py-0.5 rounded-full capitalize">
+                          {it.status}
+                        </span>
+                      </td>
+                      {isAdmin && (
+                        <td className="px-4 py-3 text-right space-x-2">
+                          <button
+                            onClick={() => handleUnlinkItem(it)}
+                            className="text-xs text-amber-400 hover:text-amber-300 font-medium px-2.5 py-1 rounded bg-amber-500/10 border border-amber-500/20 hover:bg-amber-500/20 transition-all cursor-pointer"
+                          >
+                            Desvincular
+                          </button>
+                          <button
+                            onClick={() => handleDeleteItem(it.id)}
+                            className="text-xs text-red-400 hover:text-red-300 font-medium px-2.5 py-1 rounded bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 transition-all cursor-pointer"
+                          >
+                            Eliminar
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="text-center py-12">
+              <svg className="w-12 h-12 mx-auto text-dark-600 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+              </svg>
+              <p className="text-sm text-dark-400">No hay monitores o periféricos vinculados a este equipo</p>
+            </div>
+          )}
         </div>
       )}
 

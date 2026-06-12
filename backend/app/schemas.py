@@ -106,6 +106,7 @@ class DeviceDetail(BaseModel):
     active_alerts: list[dict[str, Any]] = Field(default_factory=list)
     diagnostics_history: list[dict[str, Any]] = Field(default_factory=list)
     disks: list[dict[str, Any]] = Field(default_factory=list)
+    linked_items: list["ItemOut"] = Field(default_factory=list)
 
 
 class DeviceThresholdUpdate(BaseModel):
@@ -301,6 +302,7 @@ class UserOut(BaseModel):
     full_name: str | None
     role: str
     is_active: bool
+    needs_password_change: bool
     created_at: datetime
 
 

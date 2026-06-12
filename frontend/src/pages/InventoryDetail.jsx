@@ -110,15 +110,51 @@ export default function InventoryDetailPage() {
           )}
         <div className="glass-card p-6">
           <h3 className="text-lg font-semibold text-white mb-4">Detalles</h3>
-          <Field label="Estado" value={STATUS_LABEL[item.status] || item.status} />
-          <Field label="Nro de Serie" value={item.serial_number} mono />
-          <Field label="Marca" value={item.brand} />
-          <Field label="Modelo" value={item.model} />
-          <Field label="Ubicación" value={item.location} />
-          <Field label="Asignado a" value={item.assigned_to} />
-          <Field label="Equipo vinculado" value={item.device_id ? `#${item.device_id}` : null} />
-          <Field label="Fecha de compra" value={item.purchase_date} />
-          <Field label="Garantía hasta" value={item.warranty_until} />
+          {item.category_name === "Licencias" ? (
+            <>
+              <Field label="Licencia" value={item.name} />
+              <Field label="Nombre del equipo" value={item.model} />
+              <Field label="Usuario" value={item.assigned_to} />
+              <Field label="Ubicación" value={item.location} />
+              <Field label="Vencimiento" value={item.warranty_until} />
+              <Field label="Estado" value={STATUS_LABEL[item.status] || item.status} />
+              {item.device_id && <Field label="Equipo vinculado" value={`#${item.device_id}`} />}
+            </>
+          ) : item.category_name === "Monitores" ? (
+            <>
+              <Field label="Código de Monitor" value={item.name} />
+              <Field label="Modelo" value={item.model} />
+              <Field label="Pulgadas" value={item.brand} />
+              <Field label="Nro de Serie del Fabricante" value={item.serial_number} mono />
+              <Field label="Asignado a" value={item.assigned_to} />
+              <Field label="Ubicación" value={item.location} />
+              <Field label="Estado" value={STATUS_LABEL[item.status] || item.status} />
+              <Field label="Equipo vinculado" value={item.device_id ? `#${item.device_id}` : null} />
+            </>
+          ) : item.category_name === "Periféricos" ? (
+            <>
+              <Field label="Código de Periférico" value={item.name} />
+              <Field label="Marca" value={item.brand} />
+              <Field label="Modelo" value={item.model} />
+              <Field label="Nro de Serie del Fabricante" value={item.serial_number} mono />
+              <Field label="Asignado a" value={item.assigned_to} />
+              <Field label="Ubicación" value={item.location} />
+              <Field label="Estado" value={STATUS_LABEL[item.status] || item.status} />
+              <Field label="Equipo vinculado" value={item.device_id ? `#${item.device_id}` : null} />
+            </>
+          ) : (
+            <>
+              <Field label="Estado" value={STATUS_LABEL[item.status] || item.status} />
+              <Field label="Nro de Serie" value={item.serial_number} mono />
+              <Field label="Marca" value={item.brand} />
+              <Field label="Modelo" value={item.model} />
+              <Field label="Ubicación" value={item.location} />
+              <Field label="Asignado a" value={item.assigned_to} />
+              <Field label="Equipo vinculado" value={item.device_id ? `#${item.device_id}` : null} />
+              <Field label="Fecha de compra" value={item.purchase_date} />
+              <Field label="Garantía hasta" value={item.warranty_until} />
+            </>
+          )}
           {item.notes && <Field label="Notas" value={item.notes} />}
         </div>
         </div>

@@ -12,6 +12,7 @@ from .. import models, schemas
 from ..auth import get_current_user, require_admin, verify_api_key
 from ..database import get_db
 from ..models import to_naive, utcnow
+from ..services import inventory_service as inv
 from ..services.alert_service import evaluate_alerts
 from ..services.ingest_service import ingest_payload
 from ..services.task_service import REMOTE_ACTIONS, create_action_task, get_pending_tasks
@@ -73,6 +74,11 @@ def get_device(
         .order_by(models.DiskInfo.mount_point.asc())
         .all()
     )
+    linked_items = (
+        db.query(models.InventoryItem)
+        .filter(models.InventoryItem.device_id == device.id)
+        .all()
+    )
 
     payload = json.loads(latest_diag.result_json) if latest_diag else {}
     return schemas.DeviceDetail(
@@ -106,7 +112,28 @@ def get_device(
             }
             for d in disks
         ],
+        linked_items=[inv.item_to_out(item) for item in linked_items],
     )
+
+
+@router.delete("/devices/{device_id}")
+def delete_device(
+    device_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_admin),
+):
+    device = db.query(models.Device).filter(models.Device.id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Equipo no encontrado")
+
+    # Desvincular items de inventario asociados
+    db.query(models.InventoryItem).filter(models.InventoryItem.device_id == device_id).update(
+        {models.InventoryItem.device_id: None}, synchronize_session=False
+    )
+
+    db.delete(device)
+    db.commit()
+    return {"status": "ok", "message": "Equipo eliminado correctamente"}
 
 
 @router.post("/devices/register", response_model=schemas.DeviceOut)
@@ -349,6 +376,60 @@ def dashboard_metrics(
     )
     no_internet = sum(1 for d in online_devices if not d.internet_ok)
 
+    # Licencias que vencen en los próximos 30 días
+    from datetime import date
+    today = date.today()
+    limit_date = today + timedelta(days=30)
+    lic_cat = db.query(models.InventoryCategory).filter(models.InventoryCategory.name == "Licencias").first()
+    expiring_licenses_count = 0
+    expiring_licenses_list = []
+    if lic_cat:
+        expiring_lics = (
+            db.query(models.InventoryItem)
+            .filter(
+                models.InventoryItem.category_id == lic_cat.id,
+                models.InventoryItem.warranty_until >= today,
+                models.InventoryItem.warranty_until <= limit_date,
+                models.InventoryItem.status == "active"
+            )
+            .all()
+        )
+        expiring_licenses_count = len(expiring_lics)
+        expiring_licenses_list = [
+            {
+                "id": item.id,
+                "name": item.name,
+                "model": item.model,
+                "assigned_to": item.assigned_to,
+                "warranty_until": item.warranty_until.isoformat() if item.warranty_until else None,
+            }
+            for item in expiring_lics
+        ]
+
+    # Top 5 equipos más potentes
+    top_powerful = (
+        db.query(models.Device)
+        .order_by(
+            models.Device.ram_total_gb.desc(),
+            models.Device.cpu_cores.desc(),
+            models.Device.cpu_freq_mhz.desc()
+        )
+        .limit(5)
+        .all()
+    )
+    top_powerful_list = [
+        {
+            "id": d.id,
+            "hostname": d.hostname,
+            "ram_total_gb": d.ram_total_gb,
+            "cpu_cores": d.cpu_cores,
+            "cpu_model": d.cpu_model,
+            "ip_address": d.ip_address,
+            "online": d.id in online_ids
+        }
+        for d in top_powerful
+    ]
+
     return {
         "total_devices": total,
         "online_devices": online,
@@ -386,6 +467,9 @@ def dashboard_metrics(
             }
             for a in recent_alerts
         ],
+        "expiring_licenses_count": expiring_licenses_count,
+        "expiring_licenses": expiring_licenses_list,
+        "top_powerful_devices": top_powerful_list,
     }
 
 

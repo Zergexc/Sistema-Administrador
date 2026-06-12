@@ -6,6 +6,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from sqlalchemy import text
 from .config import settings as app_settings
 from .database import SessionLocal
 from .routes import alerts, auth, devices, diagnostics, inventory, glpi
@@ -18,6 +19,22 @@ logging.basicConfig(level=app_settings.log_level)
 logger = logging.getLogger(__name__)
 
 scheduler: BackgroundScheduler | None = None
+
+
+def _migrate_db() -> None:
+    db = SessionLocal()
+    try:
+        # PRAGMA table_info de SQLite para ver si existe la columna
+        res = db.execute(text("PRAGMA table_info(users)")).fetchall()
+        columns = [r[1] for r in res]
+        if "needs_password_change" not in columns:
+            logger.info("Migración: Añadiendo columna 'needs_password_change' a la tabla 'users'...")
+            db.execute(text("ALTER TABLE users ADD COLUMN needs_password_change BOOLEAN DEFAULT 0"))
+            db.commit()
+    except Exception as exc:
+        logger.error("Error al ejecutar migración de la base de datos: %s", exc)
+    finally:
+        db.close()
 
 
 def _seed() -> None:
@@ -42,6 +59,9 @@ def _run_snapshot_cleanup() -> None:
 async def lifespan(app: FastAPI):
     # Captura el event loop para que el broadcast WS funcione desde rutas síncronas.
     manager.set_loop(asyncio.get_running_loop())
+
+    # Ejecutar migración antes del seed
+    _migrate_db()
 
     if app_settings.allow_seed_data:
         try:

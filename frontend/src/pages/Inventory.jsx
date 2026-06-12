@@ -124,6 +124,46 @@ export default function InventoryPage() {
     assigned_to: ""
   });
 
+  const activeCategoryName = categories.find((c) => c.id === activeCategoryId)?.name || "";
+
+  const filteredItems = items.filter((it) => {
+    if (columnFilters.id && !String(it.id).toLowerCase().includes(columnFilters.id.toLowerCase())) return false;
+    
+    if (activeCategoryName === "Correos") {
+      if (columnFilters.assigned_to && !String(it.assigned_to || "").toLowerCase().includes(columnFilters.assigned_to.toLowerCase())) return false;
+      if (columnFilters.name && !String(it.name || "").toLowerCase().includes(columnFilters.name.toLowerCase())) return false;
+    } else {
+      if (columnFilters.name && !String(it.name || "").toLowerCase().includes(columnFilters.name.toLowerCase())) return false;
+      if (columnFilters.brand && !String(it.brand || "").toLowerCase().includes(columnFilters.brand.toLowerCase())) return false;
+      if (columnFilters.serial_number && !String(it.serial_number || "").toLowerCase().includes(columnFilters.serial_number.toLowerCase())) return false;
+      if (columnFilters.assigned_to && !String(it.assigned_to || "").toLowerCase().includes(columnFilters.assigned_to.toLowerCase())) return false;
+    }
+    
+    if (columnFilters.model && !String(it.model || "").toLowerCase().includes(columnFilters.model.toLowerCase())) return false;
+    
+    return true;
+  });
+
+  const sortedItems = [...filteredItems].sort((a, b) => {
+    let valA = a[sortField];
+    let valB = b[sortField];
+    
+    if (sortField === "id") {
+      valA = Number(valA) || 0;
+      valB = Number(valB) || 0;
+    } else {
+      valA = String(valA || "").toLowerCase();
+      valB = String(valB || "").toLowerCase();
+    }
+    
+    if (valA < valB) return sortDirection === "asc" ? -1 : 1;
+    if (valA > valB) return sortDirection === "asc" ? 1 : -1;
+    return 0;
+  });
+
+  const visibleSelectedItems = sortedItems.filter((it) => selectedIds.has(it.id));
+  const visibleSelectedCount = visibleSelectedItems.length;
+
   // Limpiar selección, orden y filtros cuando cambia de categoría
   useEffect(() => {
     setSelectedIds(new Set());
@@ -151,22 +191,22 @@ export default function InventoryPage() {
 
   const handleSelectAll = () => {
     setSelectedIds((prev) => {
-      const allSelected = items.length > 0 && items.every((it) => prev.has(it.id));
+      const allSelected = sortedItems.length > 0 && sortedItems.every((it) => prev.has(it.id));
       const next = new Set(prev);
       if (allSelected) {
-        items.forEach((it) => next.delete(it.id));
+        sortedItems.forEach((it) => next.delete(it.id));
       } else {
-        items.forEach((it) => next.add(it.id));
+        sortedItems.forEach((it) => next.add(it.id));
       }
       return next;
     });
   };
 
   const handleBulkDelete = async () => {
-    if (!window.confirm(`¿Estás seguro de eliminar los ${selectedIds.size} items seleccionados?`)) return;
+    if (!window.confirm(`¿Estás seguro de eliminar los ${visibleSelectedCount} items seleccionados?`)) return;
     try {
       addToast("Eliminando items...", "info");
-      await Promise.all(Array.from(selectedIds).map((id) => api.deleteItem(id)));
+      await Promise.all(visibleSelectedItems.map((it) => api.deleteItem(it.id)));
       addToast("Items eliminados correctamente", "success");
       setSelectedIds(new Set());
       loadItems();
@@ -185,10 +225,8 @@ export default function InventoryPage() {
     try {
       addToast("Actualizando estados...", "info");
       await Promise.all(
-        Array.from(selectedIds).map((id) => {
-          const it = items.find((item) => item.id === id);
-          if (!it) return Promise.resolve();
-          return api.updateItem(id, {
+        visibleSelectedItems.map((it) => {
+          return api.updateItem(it.id, {
             ...it,
             status: newStatus,
           });
@@ -204,10 +242,8 @@ export default function InventoryPage() {
   };
 
   const handleBulkQr = () => {
-    navigate(`/inventory/labels?ids=${Array.from(selectedIds).join(",")}`);
+    navigate(`/inventory/labels?ids=${visibleSelectedItems.map((it) => it.id).join(",")}`);
   };
-
-  const activeCategoryName = categories.find((c) => c.id === activeCategoryId)?.name || "";
 
   const handleSort = (field) => {
     if (sortField === field) {
@@ -247,40 +283,7 @@ export default function InventoryPage() {
     );
   };
 
-  const filteredItems = items.filter((it) => {
-    if (columnFilters.id && !String(it.id).toLowerCase().includes(columnFilters.id.toLowerCase())) return false;
-    
-    if (activeCategoryName === "Correos") {
-      if (columnFilters.assigned_to && !String(it.assigned_to || "").toLowerCase().includes(columnFilters.assigned_to.toLowerCase())) return false;
-      if (columnFilters.name && !String(it.name || "").toLowerCase().includes(columnFilters.name.toLowerCase())) return false;
-    } else {
-      if (columnFilters.name && !String(it.name || "").toLowerCase().includes(columnFilters.name.toLowerCase())) return false;
-      if (columnFilters.brand && !String(it.brand || "").toLowerCase().includes(columnFilters.brand.toLowerCase())) return false;
-      if (columnFilters.serial_number && !String(it.serial_number || "").toLowerCase().includes(columnFilters.serial_number.toLowerCase())) return false;
-      if (columnFilters.assigned_to && !String(it.assigned_to || "").toLowerCase().includes(columnFilters.assigned_to.toLowerCase())) return false;
-    }
-    
-    if (columnFilters.model && !String(it.model || "").toLowerCase().includes(columnFilters.model.toLowerCase())) return false;
-    
-    return true;
-  });
-
-  const sortedItems = [...filteredItems].sort((a, b) => {
-    let valA = a[sortField];
-    let valB = b[sortField];
-    
-    if (sortField === "id") {
-      valA = Number(valA) || 0;
-      valB = Number(valB) || 0;
-    } else {
-      valA = String(valA || "").toLowerCase();
-      valB = String(valB || "").toLowerCase();
-    }
-    
-    if (valA < valB) return sortDirection === "asc" ? -1 : 1;
-    if (valA > valB) return sortDirection === "asc" ? 1 : -1;
-    return 0;
-  });
+  // filteredItems y sortedItems ahora se definen arriba para ser accesibles por los handlers de acciones en lote.
 
   return (
     <div className="space-y-6 animate-fade-in pb-16">
@@ -366,6 +369,18 @@ export default function InventoryPage() {
                 <option value="">Todas las licencias</option>
                 <option value="Microsoft 365 F1">Microsoft 365 F1</option>
                 <option value="Microsoft 365 Business Basic">Microsoft 365 Business Basic</option>
+              </select>
+            )}
+
+            {activeCategoryName === "Licencias" && (
+              <select 
+                className="input-field w-full sm:w-56 cursor-pointer bg-dark-800" 
+                value={columnFilters.name} 
+                onChange={(e) => setColumnFilters(f => ({ ...f, name: e.target.value }))}
+              >
+                <option value="">Todas las licencias</option>
+                <option value="Kaspersky Small Office Security">Kaspersky Small Office Security</option>
+                <option value="Kaspersky Premium">Kaspersky Premium</option>
               </select>
             )}
 
@@ -500,7 +515,7 @@ export default function InventoryPage() {
                       <input
                         type="checkbox"
                         className="sr-only peer"
-                        checked={items.length > 0 && items.every((it) => selectedIds.has(it.id))}
+                        checked={sortedItems.length > 0 && sortedItems.every((it) => selectedIds.has(it.id))}
                         onChange={handleSelectAll}
                       />
                       <div className="w-5 h-5 rounded-md border border-dark-500 bg-dark-900/60 peer-checked:bg-accent-500 peer-checked:border-accent-500 flex items-center justify-center transition-all duration-200 hover:border-accent-400 peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500/50 shadow-inner">
@@ -518,11 +533,34 @@ export default function InventoryPage() {
                       {renderSortableHeader("Licencia", "model")}
                       {renderSortableHeader("Estado", "status")}
                     </>
+                  ) : activeCategoryName === "Licencias" ? (
+                    <>
+                      {renderSortableHeader("Licencia", "name")}
+                      {renderSortableHeader("Nombre del equipo", "model")}
+                      {renderSortableHeader("Usuario", "assigned_to")}
+                      {renderSortableHeader("Ubicación", "location")}
+                      {renderSortableHeader("Vencimiento", "warranty_until")}
+                      {renderSortableHeader("Estado", "status")}
+                    </>
+                  ) : activeCategoryName === "Monitores" ? (
+                    <>
+                      {renderSortableHeader("Código de Monitor", "name")}
+                      {renderSortableHeader("Modelo", "model")}
+                      {renderSortableHeader("Pulgadas", "brand")}
+                      {renderSortableHeader("Estado", "status")}
+                    </>
+                  ) : activeCategoryName === "Periféricos" ? (
+                    <>
+                      {renderSortableHeader("Código de Periférico", "name")}
+                      {renderSortableHeader("Marca", "brand")}
+                      {renderSortableHeader("Modelo", "model")}
+                      {renderSortableHeader("Asignado a", "assigned_to")}
+                      {renderSortableHeader("Estado", "status")}
+                    </>
                   ) : (
                     <>
                       {renderSortableHeader("Nombre / Activo", "name")}
                       {renderSortableHeader(
-                        activeCategoryName === "Licencias" ? "Editor" : 
                         activeCategoryName === "Software" ? "Desarrollador" : "Marca",
                         "brand"
                       )}
@@ -530,10 +568,7 @@ export default function InventoryPage() {
                         activeCategoryName === "Software" ? "Versión" : "Modelo",
                         "model"
                       )}
-                      {renderSortableHeader(
-                        activeCategoryName === "Licencias" ? "Clave (Product Key)" : "Nro Serie",
-                        "serial_number"
-                      )}
+                      {renderSortableHeader("Nro Serie", "serial_number")}
                       {renderSortableHeader("Asignado a", "assigned_to")}
                       {renderSortableHeader("Estado", "status")}
                     </>
@@ -565,6 +600,30 @@ export default function InventoryPage() {
                         <td className="px-6 py-3.5 font-medium text-white group-hover:text-accent-400">{it.assigned_to || "—"}</td>
                         <td className="px-6 py-3.5 text-dark-300">{it.name}</td>
                         <td className="px-6 py-3.5 text-dark-300">{it.model || "—"}</td>
+                        <td className="px-6 py-3.5"><span className={STATUS_BADGE[it.status] || "badge-info"}>{STATUS_LABEL[it.status] || it.status}</span></td>
+                      </>
+                    ) : activeCategoryName === "Licencias" ? (
+                      <>
+                        <td className="px-6 py-3.5 font-medium text-white group-hover:text-accent-400">{it.name}</td>
+                        <td className="px-6 py-3.5 text-dark-300">{it.model || "—"}</td>
+                        <td className="px-6 py-3.5 text-dark-300">{it.assigned_to || "—"}</td>
+                        <td className="px-6 py-3.5 text-dark-300">{it.location || "—"}</td>
+                        <td className="px-6 py-3.5 text-dark-300 font-mono text-xs">{it.warranty_until ? new Date(it.warranty_until).toLocaleDateString("es-MX") : "—"}</td>
+                        <td className="px-6 py-3.5"><span className={STATUS_BADGE[it.status] || "badge-info"}>{STATUS_LABEL[it.status] || it.status}</span></td>
+                      </>
+                    ) : activeCategoryName === "Monitores" ? (
+                      <>
+                        <td className="px-6 py-3.5 font-medium text-white group-hover:text-accent-400">{it.name}</td>
+                        <td className="px-6 py-3.5 text-dark-300">{it.model || "—"}</td>
+                        <td className="px-6 py-3.5 text-dark-300">{it.brand || "—"}</td>
+                        <td className="px-6 py-3.5"><span className={STATUS_BADGE[it.status] || "badge-info"}>{STATUS_LABEL[it.status] || it.status}</span></td>
+                      </>
+                    ) : activeCategoryName === "Periféricos" ? (
+                      <>
+                        <td className="px-6 py-3.5 font-medium text-white group-hover:text-accent-400">{it.name}</td>
+                        <td className="px-6 py-3.5 text-dark-300">{it.brand || "—"}</td>
+                        <td className="px-6 py-3.5 text-dark-300">{it.model || "—"}</td>
+                        <td className="px-6 py-3.5 text-dark-300">{it.assigned_to || "—"}</td>
                         <td className="px-6 py-3.5"><span className={STATUS_BADGE[it.status] || "badge-info"}>{STATUS_LABEL[it.status] || it.status}</span></td>
                       </>
                     ) : (
@@ -602,7 +661,7 @@ export default function InventoryPage() {
       </div>
 
       {/* Barra de herramientas flotante de acciones en lote */}
-      {selectedIds.size > 0 && (
+      {visibleSelectedCount > 0 && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 glass-card bg-dark-900/95 border-accent-500/30 p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4 shadow-[0_10px_50px_rgba(99,102,241,0.25)] border-2 animate-slide-up w-[95vw] sm:max-w-2xl">
           <div className="flex items-center justify-between w-full sm:w-auto gap-3 border-b border-dark-700/50 pb-3 sm:pb-0 sm:border-0">
             <div className="flex items-center gap-2">
@@ -611,7 +670,7 @@ export default function InventoryPage() {
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-accent-500"></span>
               </span>
               <span className="text-xs font-bold text-white whitespace-nowrap bg-accent-500/10 border border-accent-500/20 px-3 py-1.5 rounded-xl">
-                {selectedIds.size} seleccionados
+                {visibleSelectedCount} seleccionados
               </span>
             </div>
             <button onClick={() => setSelectedIds(new Set())} className="text-xs text-dark-300 hover:text-white transition-colors flex items-center gap-1.5 bg-dark-800/40 hover:bg-dark-700/50 px-2.5 py-1.5 rounded-xl border border-dark-600/30">

@@ -71,6 +71,7 @@ export default function InventoryItemModal({ open, onClose, onSaved, categories,
 
   const selectedCategoryName = categories?.find((c) => String(c.id) === String(form.category_id))?.name || "";
   const isCorreos = selectedCategoryName === "Correos";
+  const isLicencias = selectedCategoryName === "Licencias";
 
   const getLabel = (field) => {
     const labels = {
@@ -79,24 +80,32 @@ export default function InventoryItemModal({ open, onClose, onSaved, categories,
         Correos: "Correo Electrónico *",
         Licencias: "Nombre de Licencia *",
         Software: "Nombre del Software *",
+        Monitores: "Código de Monitor (ej. MIN-MON-001) *",
+        "Periféricos": "Código de Periférico *",
       },
       serial_number: {
         default: "Nro de Serie",
         Correos: "Contraseña / Token de Acceso",
         Licencias: "Clave de Licencia (Product Key)",
         Software: "Clave de Activación",
+        Monitores: "Nro de Serie del Fabricante",
+        "Periféricos": "Nro de Serie del Fabricante",
       },
       brand: {
         default: "Marca",
         Correos: "Proveedor / Hosting (ej. Outlook, Gmail)",
         Licencias: "Editor / Fabricante (ej. Microsoft, Adobe)",
         Software: "Desarrollador / Distribuidor",
+        Monitores: "Pulgadas (ej. 24\")",
+        "Periféricos": "Marca",
       },
       model: {
         default: "Modelo",
         Correos: "Licencia",
         Licencias: "Duración (ej. Anual, Perpetua)",
         Software: "Versión",
+        Monitores: "Modelo",
+        "Periféricos": "Modelo",
       },
       location: {
         default: "Ubicación",
@@ -139,7 +148,50 @@ export default function InventoryItemModal({ open, onClose, onSaved, categories,
         </div>
 
         <form onSubmit={submit} className="grid sm:grid-cols-2 gap-4">
-          {isCorreos ? (
+          {isLicencias ? (
+            <>
+              <div>
+                <label className="text-sm text-dark-300 mb-1.5 block">Licencia *</label>
+                <select className="input-field" required value={form.name} onChange={(e) => set("name", e.target.value)}>
+                  <option value="" disabled>Seleccionar antivirus…</option>
+                  <option value="Kaspersky Small Office Security">Kaspersky Small Office Security</option>
+                  <option value="Kaspersky Premium">Kaspersky Premium</option>
+                  {form.name && form.name !== "Kaspersky Small Office Security" && form.name !== "Kaspersky Premium" && (
+                    <option value={form.name}>{form.name}</option>
+                  )}
+                </select>
+              </div>
+              <div>
+                <label className="text-sm text-dark-300 mb-1.5 block">Nombre del equipo</label>
+                <input className="input-field" value={form.model || ""} onChange={(e) => set("model", e.target.value)} />
+              </div>
+              <div>
+                <label className="text-sm text-dark-300 mb-1.5 block">Usuario</label>
+                <input className="input-field" value={form.assigned_to || ""} onChange={(e) => set("assigned_to", e.target.value)} />
+              </div>
+              <div>
+                <label className="text-sm text-dark-300 mb-1.5 block">Ubicación</label>
+                <input className="input-field" value={form.location || ""} onChange={(e) => set("location", e.target.value)} />
+              </div>
+              <div>
+                <label className="text-sm text-dark-300 mb-1.5 block">Vencimiento</label>
+                <input type="date" className="input-field" value={form.warranty_until || ""} onChange={(e) => set("warranty_until", e.target.value)} />
+              </div>
+              <div>
+                <label className="text-sm text-dark-300 mb-1.5 block">Estado</label>
+                <select className="input-field" value={form.status} onChange={(e) => set("status", e.target.value)}>
+                  {STATUS_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+              </div>
+              <div className="sm:col-span-2">
+                <label className="text-sm text-dark-300 mb-1.5 block">Categoría *</label>
+                <select className="input-field" required value={form.category_id} onChange={(e) => set("category_id", e.target.value)}>
+                  <option value="" disabled>Seleccionar…</option>
+                  {categories?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+            </>
+          ) : isCorreos ? (
             <>
               <div>
                 <label className="text-sm text-dark-300 mb-1.5 block">{getLabel("name")}</label>
